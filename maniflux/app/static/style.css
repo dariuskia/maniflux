@@ -191,7 +191,7 @@ button.chip { font-size: 0.85rem; min-height: 36px; padding: 0.3rem 0.75rem; bor
 .weight.group { grid-template-columns: minmax(8rem, 1fr) 9rem 2.5rem auto; padding-left: 0; }
 .rename { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
 .rename input, .add-group input { font: inherit; min-height: 40px; padding: 0.25rem 0.5rem; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); min-width: 0; width: 100%; }
-.rename .muted { font-size: 0.8rem; white-space: nowrap; }
+.rename .muted { font-size: 0.8rem; white-space: nowrap; min-width: 3.6rem; text-align: right; }
 .add-group { display: flex; gap: 0.5rem; margin: 0.75rem 0 1rem; }
 button.small { min-height: 36px; font-size: 0.85rem; padding: 0.3rem 0.6rem; }
 .feed { border-top: 1px solid var(--line); padding: 0.4rem 0; }
