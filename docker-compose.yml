@@ -1,0 +1,61 @@
+# Miniflux on your Mac. Passwords come from the .env file next to this one.
+# Open http://localhost:8080 once it's running.
+
+services:
+  miniflux:
+    image: miniflux/miniflux:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://miniflux:${POSTGRES_PASSWORD}@db/miniflux?sslmode=disable
+      RUN_MIGRATIONS: "1"
+      CREATE_ADMIN: "1"
+      ADMIN_USERNAME: ${MINIFLUX_ADMIN_USER}
+      ADMIN_PASSWORD: ${MINIFLUX_ADMIN_PASSWORD}
+      # For later: lets Miniflux fetch feeds from services on this Mac (e.g. RSSHub)
+      FETCHER_ALLOW_PRIVATE_NETWORKS: "1"
+      # For later: lets Miniflux send its save webhook to the save-to-Obsidian receiver on this Mac
+      INTEGRATION_ALLOW_PRIVATE_NETWORKS: "1"
+      # Video length for new YouTube entries (one page fetch per new video), used by Maniflux's time budget
+      FETCH_YOUTUBE_WATCH_TIME: "1"
+
+  # Maniflux: ranks unread entries and saves to Obsidian. Open http://127.0.0.1:8090
+  maniflux:
+    build: ./maniflux
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:8090"
+    depends_on:
+      - miniflux
+    environment:
+      MINIFLUX_URL: http://miniflux:8080/v1
+      MINIFLUX_API_KEY: ${MINIFLUX_API_KEY}
+      # Writes each saved note's type and description
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-haiku-5.5}
+      TZ: ${TZ:-America/Los_Angeles}
+    volumes:
+      - ${VAULT_CONTENT_PATH}:/vault/content
+      - maniflux-data:/data
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: miniflux
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: miniflux
+    volumes:
+      - miniflux-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "miniflux"]
+      interval: 10s
+      start_period: 30s
+
+volumes:
+  miniflux-db:
+  maniflux-data:

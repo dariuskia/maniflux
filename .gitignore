@@ -1,0 +1,18 @@
+# Secrets and local state
+.env
+# Notes about this particular Mac and server (addresses, specs); kept local only
+docs/SETUP-NOTES.md
+*.db
+*.db-wal
+*.db-shm
+data/
+backup-*.sql
+kill-the-newsletter/.hostname
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# macOS
+.DS_Store

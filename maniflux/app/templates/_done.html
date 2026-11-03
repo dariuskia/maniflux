@@ -1,0 +1,6 @@
+<div class="done {{ 'error' if error else '' }}" id="e-{{ entry.id }}" data-id="{{ entry.id }}">
+  <span>{{ text }}{% if entry.title and not error and not text.startswith(('Saved', 'Already')) %}: {{ entry.title }}{% endif %}</span>
+  {% if undo %}
+    <button class="undo" hx-post="/e/{{ entry.id }}/undo" hx-target="#e-{{ entry.id }}" hx-swap="outerHTML">Undo</button>
+  {% endif %}
+</div>

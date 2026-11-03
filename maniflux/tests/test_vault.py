@@ -1,0 +1,90 @@
+import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import yaml
+
+from app.vault import VaultIndex, read_frontmatter, render_note, safe_file_name, split_authors, write_note
+
+from .conftest import make_entry
+
+TZ = ZoneInfo("America/Los_Angeles")
+NOW = datetime(2026, 10, 30, 12, 0, tzinfo=TZ)
+
+
+def note(entry, thought="", note_type="article", description="What it covers."):
+    return render_note(entry, thought, NOW, "people", TZ, note_type=note_type, description=description)
+
+
+def test_note_format():
+    e = make_entry(1, "Why Politics Has Become So Frenzied", url="https://www.theatlantic.com/x?utm_source=rss&id=3",
+                   author="Jane Doe and John Roe", reading_time=9)
+    e["feed"]["title"] = "The Atlantic"
+    text = note(e, "my thought", description='Says "a lot": about politics.')
+    fm = read_frontmatter(text)
+
+    assert fm["title"] == "Why Politics Has Become So Frenzied"
+    assert fm["url"] == "https://www.theatlantic.com/x?id=3"
+    assert fm["source"] == "The Atlantic"
+    assert fm["via"] == "reader"
+    assert fm["author"] == ["[[people/Jane Doe|Jane Doe]]", "[[people/John Roe|John Roe]]"]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", fm["published"])
+    assert fm["date-added"] == "2026-10-30T12:00:00-07:00"
+    assert fm["type"] == "article"
+    assert fm["minutes"] == 9
+    assert fm["description"] == 'Says "a lot": about politics.'
+    assert fm["tags"] == ["clippings", "article"]
+    assert "archive" in fm and fm["archive"] is None
+    # finished note: no prompts and no page text
+    assert "{{" not in text and "%%" not in text
+    assert text.endswith("---\n\n## Notes\n\nmy thought\n")
+
+
+def test_empty_fields_and_books():
+    e = make_entry(1, 'Quotes "and" colons: a [test] #1', author="", reading_time=7)
+    fm = read_frontmatter(note(e, note_type="book", description=""))
+    assert fm["title"] == 'Quotes "and" colons: a [test] #1'
+    assert fm["author"] is None and fm["description"] is None
+    assert fm["minutes"] is None  # books don't get a length
+    assert safe_file_name(e["title"]) == "Quotes and colons a test 1"
+    assert note(e).endswith("## Notes\n\n")
+
+
+def test_write_never_overwrites(tmp_path):
+    e = make_entry(1, "Same title")
+    a = write_note(tmp_path, e, "one")
+    b = write_note(tmp_path, e, "two")
+    assert a.name == "Same title.md" and b.name == "Same title (2).md"
+    assert a.read_text() == "one"
+
+
+def test_index_finds_urls_and_lists_broken(tmp_path):
+    (tmp_path / "a.md").write_text('---\ntitle: A\nurl: "https://www.example.com/a/?utm_source=x"\n---\n')
+    (tmp_path / "clip.md").write_text("---\nsource: https://example.com/clipped\n---\n")
+    (tmp_path / "bad.md").write_text("---\ntitle: [unclosed\n---\n")
+    (tmp_path / "nofm.md").write_text("just text")
+    (tmp_path / "typo.md").write_text('---\ndate-added: 2025-08-04T14:02:96\nurl: "https://example.com/typo"\n---\n')
+    idx = VaultIndex(tmp_path)
+    assert idx.find("https://example.com/a").name == "a.md"
+    assert idx.find("https://example.com/clipped#x").name == "clip.md"
+    assert idx.find("https://example.com/other") is None
+    assert idx.find("https://example.com/typo").name == "typo.md"
+    assert {b.path for b in idx.broken()} == {"bad.md", "nofm.md"}
+
+
+def test_split_authors():
+    assert split_authors("By Jane Doe, John Roe & Ann Lee") == ["Jane Doe", "John Roe", "Ann Lee"]
+    assert split_authors("Alexandra Andrews") == ["Alexandra Andrews"]
+    assert split_authors("") == []
+
+
+def test_unicode_survives_yaml():
+    text = note(make_entry(1, "Ünïcode — “quotes” 'single'"), description="Café ✨")
+    fm = yaml.safe_load(text.split("---\n")[1])
+    assert fm["title"] == "Ünïcode — “quotes” 'single'" and fm["description"] == "Café ✨"
+
+
+def test_source_text_keeps_sentences_whole():
+    from app.text import full_text
+    assert full_text('<p>He backed <a href="#">a petition</a> today.</p><p>Next<br>line</p>') == \
+        "He backed a petition today.\nNext\nline"

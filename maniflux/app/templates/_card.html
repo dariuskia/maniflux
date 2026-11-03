@@ -1,0 +1,25 @@
+{% set e = item.entry %}
+<article class="card" id="e-{{ e.id }}" data-id="{{ e.id }}" tabindex="-1">
+  <a class="title" href="/e/{{ e.id }}">{{ e.title or "Untitled" }}</a>
+  <div class="meta">
+    <span>{{ e.feed.title }}</span>
+    <span>{{ item.type }}</span>
+    {% if item.minutes %}<span>{{ item.minutes }} min</span>{% endif %}
+  </div>
+  {% if item.excerpt %}<p class="excerpt">{{ item.excerpt }}</p>{% endif %}
+  <div class="reason">{{ item.reason }}</div>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <div class="actions">
+    <form method="post" action="/e/{{ e.id }}/save" hx-post="/e/{{ e.id }}/save" hx-target="#e-{{ e.id }}" hx-swap="outerHTML" hx-disabled-elt="find button">
+      <button class="save" data-key="s">Save</button>
+    </form>
+    <button class="note-toggle" type="button" data-key="S"><span class="wide">Save with note</span><span class="narrow">Note</span></button>
+    <form method="post" action="/e/{{ e.id }}/read" hx-post="/e/{{ e.id }}/read" hx-target="#e-{{ e.id }}" hx-swap="outerHTML">
+      <button data-key="x">Archive</button>
+    </form>
+  </div>
+  <form class="note" method="post" action="/e/{{ e.id }}/save" hx-post="/e/{{ e.id }}/save" hx-target="#e-{{ e.id }}" hx-swap="outerHTML" hx-disabled-elt="find button" hidden>
+    <textarea name="thought" rows="3" placeholder="Your thought goes under Notes"></textarea>
+    <button class="save">Save</button>
+  </form>
+</article>

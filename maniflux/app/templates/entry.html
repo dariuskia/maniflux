@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block page %}entry{% endblock %}
+{% block title %}{{ entry.title if entry else "Maniflux" }}{% endblock %}
+{% block main %}
+{% if error %}
+  <div class="problem">
+    <p><strong>Couldn't open this item.</strong></p>
+    <p class="muted">{{ error }}</p>
+    <p><a href="/">Back to the list</a></p>
+  </div>
+{% else %}
+<div class="reader" data-id="{{ entry.id }}"{% if archived_now %} data-archived="1"{% endif %}>
+  <p><a href="/" class="back">← List</a></p>
+  <h1>{{ entry.title or "Untitled" }}</h1>
+  <div class="meta">
+    <span>{{ entry.feed.title }}</span>
+    {% if entry.author %}<span>{{ entry.author }}</span>{% endif %}
+    <span>{{ item.type }}</span>
+    {% if item.minutes %}<span>{{ item.minutes }} min</span>{% endif %}
+  </div>
+  {% if problem %}<p class="error">{{ problem }}</p>{% endif %}
+  <div class="actions">
+    <a class="button" href="/e/{{ entry.id }}/original" target="_blank" rel="noopener" data-key="v">Original</a>
+    <button hx-post="/e/{{ entry.id }}/full" hx-target="#content" hx-indicator="#loading">Load full article</button>
+    <form method="post" action="/e/{{ entry.id }}/save"><input type="hidden" name="back" value="/"><button class="save" data-key="s">Save</button></form>
+    <button class="note-toggle" type="button" data-key="S"><span class="wide">Save with note</span><span class="narrow">Note</span></button>
+    <form method="post" action="/e/{{ entry.id }}/unread"><input type="hidden" name="back" value="/"><button data-key="u">Unarchive</button></form>
+  </div>
+  <form class="note" method="post" action="/e/{{ entry.id }}/save" hidden>
+    <input type="hidden" name="back" value="/">
+    <textarea name="thought" rows="3" placeholder="Your thought goes under Notes"></textarea>
+    <button class="save">Save</button>
+  </form>
+  <p id="loading" class="htmx-indicator muted">Loading the full article…</p>
+  <div id="content" class="content">{{ entry.content | safe }}</div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block page %}list{% endblock %}
+{% macro url(show=view.show, group=view.group, budget=view.budget) -%}
+  {%- set p = [] -%}
+  {%- if view.q %}{% set _ = p.append("q=" ~ view.q|urlencode) %}{% endif -%}
+  {%- if show and show != "all" %}{% set _ = p.append("show=" ~ show) %}{% endif -%}
+  {%- if group %}{% set _ = p.append("group=" ~ group) %}{% endif -%}
+  {%- if budget %}{% set _ = p.append("budget=" ~ budget) %}{% endif -%}
+  /{{ "?" ~ p|join("&") if p else "" }}
+{%- endmacro %}
+{% block main %}
+{% if msg %}<p class="flash">{{ msg }}</p>{% endif %}
+
+{% if error %}
+  <div class="problem">
+    <p><strong>Miniflux isn't answering.</strong> Nothing has been lost; Maniflux keeps its own data.</p>
+    <p class="muted">{{ error }}</p>
+  </div>
+{% else %}
+  <form class="search" action="/" method="get" role="search">
+    <input type="search" name="q" value="{{ view.q }}" placeholder="Search unread  ( / )" autocomplete="off"
+           aria-label="Search unread items"
+           hx-get="/" hx-trigger="input changed delay:250ms, search" hx-include="closest form"
+           hx-target="#results" hx-select="#results" hx-swap="outerHTML" hx-push-url="true">
+    {% if view.show != "all" %}<input type="hidden" name="show" value="{{ view.show }}">{% endif %}
+    {% if view.group %}<input type="hidden" name="group" value="{{ view.group }}">{% endif %}
+    {% if view.budget %}<input type="hidden" name="budget" value="{{ view.budget }}">{% endif %}
+  </form>
+
+  <div id="results">
+  <nav class="tabs">
+    {% for key, label in tabs %}
+      <a href="{{ url(show=key) }}" class="{{ 'on' if view.show == key else '' }}" data-key="{{ loop.index }}">{{ label }} <span class="muted">{{ counts[key] }}</span></a>
+    {% endfor %}
+  </nav>
+
+  {% if groups %}
+  <div class="chips">
+    <a href="{{ url(group=None) }}" class="chip {{ 'on' if not view.group else '' }}">All feeds</a>
+    {% for gid, g in groups.items() %}
+      <a href="{{ url(group=gid) }}" class="chip {{ 'on' if view.group == gid else '' }}">{{ g.name }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="bar">
+    <span class="muted">
+      {% if budget_info %}
+        {{ items|length }} item{{ '' if items|length == 1 else 's' }} · {{ budget_info.total }} min
+        {% if budget_info.unknown %} · {{ budget_info.unknown }} of unknown length left out{% endif %}
+      {% else %}
+        {{ items|length }} unread{% if hidden %} · {{ hidden }} hidden by weights or rules{% endif %}
+      {% endif %}
+    </span>
+    <span class="budgets">
+      {% for b in budgets %}
+        <a href="{{ url(budget=b) }}" class="chip {{ 'on' if view.budget == b else '' }}">{{ b }} min</a>
+      {% endfor %}
+      {% if view.budget %}<a href="{{ url(budget=None) }}" class="chip">Any length</a>{% endif %}
+    </span>
+  </div>
+
+  <div id="cards">
+    {% for item in items %}
+      {% include "_card.html" %}
+    {% else %}
+      <p class="empty">{% if view.q %}Nothing unread matches “{{ view.q }}”.{% else %}Nothing here.{% endif %}</p>
+    {% endfor %}
+  </div>
+  </div>
+  <p class="keys muted">j/k move · o open · v original · s save · S save with a note · x archive · u undo · 1–4 tabs · / search</p>
+{% endif %}
+{% endblock %}

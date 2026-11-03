@@ -1,0 +1,510 @@
+import asyncio
+import hashlib
+import logging
+import os
+from contextlib import asynccontextmanager
+from datetime import datetime
+from html import escape
+from pathlib import Path
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit
+
+from fastapi import BackgroundTasks, FastAPI, Form, Query, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from . import config, kinds
+from .ai import AIError, Summarizer
+from .db import DB
+from .miniflux import Miniflux, MinifluxError
+from .ranking import SHOW, Item, budget_set, rank, rule_is_live, search, shown_by
+from .text import full_text, parse_time
+from .vault import VaultIndex, note_props, render_note, write_note
+
+log = logging.getLogger("maniflux")
+HERE = Path(__file__).parent
+BUDGETS = (10, 20, 45)
+
+
+def now() -> datetime:
+    return datetime.now(config.TZ)
+
+
+async def poll_forever(app: FastAPI):
+    """Every few minutes: score the unread entries and drop scores for ones no longer unread."""
+    while True:
+        try:
+            await refresh_scores(app)
+        except MinifluxError as e:
+            log.warning("score refresh skipped: %s", e)
+        except Exception:
+            log.exception("score refresh failed")
+        await asyncio.sleep(config.POLL_MINUTES * 60)
+
+
+async def refresh_scores(app: FastAPI):
+    db: DB = app.state.db
+    entries = await app.state.mf.unread(config.LIST_LIMIT)
+    items = rank(entries, db.steering(), now())
+    rows = [(i.id, round(i.score, 3), f"hidden: {i.hidden}" if i.hidden else i.reason) for i in items]
+    await run_in_threadpool(db.replace_scores, rows)
+    if entries:
+        top = max(e["id"] for e in entries)
+        if top > int(db.get_state("max_entry_id", 0)):
+            db.set_state("max_entry_id", top)
+
+
+async def rescore(app: FastAPI):
+    """Refresh stored scores after a weight or rule change; the list itself always ranks live."""
+    try:
+        await refresh_scores(app)
+    except MinifluxError as e:
+        log.warning("score refresh skipped: %s", e)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if not hasattr(app.state, "mf"):
+        app.state.mf = Miniflux(config.MINIFLUX_URL, config.MINIFLUX_API_KEY)
+    if not hasattr(app.state, "db"):
+        app.state.db = DB(config.DB_PATH)
+    if not hasattr(app.state, "vault"):
+        app.state.vault = VaultIndex(config.CONTENT_DIR)
+    if not hasattr(app.state, "ai"):
+        app.state.ai = Summarizer(config.OPENROUTER_API_KEY, config.OPENROUTER_MODEL)
+    app.state.save_lock = asyncio.Lock()
+    poller = None
+    if os.environ.get("MANIFLUX_NO_POLL") != "1":
+        poller = asyncio.create_task(poll_forever(app))
+    yield
+    if poller:
+        poller.cancel()
+    await app.state.mf.close()
+    await app.state.ai.close()
+
+
+app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+templates = Jinja2Templates(directory=HERE / "templates")
+
+
+def _static_version() -> str:
+    """Changes whenever a static file changes, so browsers never run an old copy."""
+    h = hashlib.sha1()
+    for p in sorted((HERE / "static").iterdir()):
+        h.update(p.read_bytes())
+    return h.hexdigest()[:10]
+
+
+templates.env.globals["v"] = _static_version()
+
+
+def is_htmx(request: Request) -> bool:
+    return request.headers.get("HX-Request") == "true"
+
+
+def page(request: Request, name: str, **ctx) -> HTMLResponse:
+    return templates.TemplateResponse(request, name, ctx)
+
+
+# ---------- list ----------
+
+TABS = [("all", "All"), ("read", "Read"), ("watch", "Watch"), ("listen", "Listen")]
+
+
+@app.get("/", response_class=HTMLResponse)
+async def list_view(request: Request, budget: int | None = None, show: str = "all", group: int | None = None,
+                    q: str = "", msg: str | None = None):
+    db: DB = request.app.state.db
+    steer = db.steering()
+    show = show if show in SHOW else "all"
+    group = group if group in steer.groups else None
+    q = " ".join(q.split())[:200]
+    view = {"show": show, "group": group, "budget": budget, "q": q}
+    ctx = dict(budgets=BUDGETS, tabs=TABS, groups=steer.groups, view=view, msg=msg)
+    try:
+        entries = await request.app.state.mf.unread(config.LIST_LIMIT)
+    except MinifluxError as e:
+        return page(request, "list.html", error=str(e), items=[], **ctx)
+    items = rank(entries, steer, now())
+    visible = [i for i in items if not i.hidden]
+    in_group = shown_by(search(visible, q), "all", group)
+    counts = {key: len(shown_by(in_group, key, None)) for key, _ in TABS}
+    shown = shown_by(in_group, show, None)
+    budget_info = None
+    if budget:
+        shown, unknown = budget_set(shown, budget)
+        budget_info = {"total": sum(i.minutes for i in shown), "unknown": unknown}
+    return page(request, "list.html", items=shown, hidden=len(items) - len(visible), counts=counts,
+                budget_info=budget_info, error=None, **ctx)
+
+
+def card(request: Request, item: Item, error: str | None = None) -> HTMLResponse:
+    return page(request, "_card.html", item=item, error=error)
+
+
+def done_row(request: Request, entry: dict, text: str, undo: str | None = None, error: bool = False) -> HTMLResponse:
+    return page(request, "_done.html", entry=entry, text=text, undo=undo, error=error)
+
+
+async def _entry(request: Request, entry_id: int) -> dict:
+    return await request.app.state.mf.entry(entry_id)
+
+
+def _back(msg: str, back: str = "/") -> RedirectResponse:
+    """Back to the list view the item was opened from (its search, tab, group and budget), with a message."""
+    parts = urlsplit(back)
+    if parts.scheme or parts.netloc or parts.path not in ("/", "/archive"):
+        parts = urlsplit("/")  # only ever back to the list or the archive on this site
+    query = [(k, v) for k, v in parse_qsl(parts.query) if k != "msg"] + [("msg", msg)]
+    return RedirectResponse(f"{parts.path}?{urlencode(query)}", status_code=303)
+
+
+@app.post("/e/{entry_id}/read")
+async def mark_read(request: Request, entry_id: int, back: str = Form("/")):
+    db: DB = request.app.state.db
+    try:
+        entry = await _entry(request, entry_id)
+        await request.app.state.mf.set_status([entry_id], "read")
+    except MinifluxError as e:
+        if not is_htmx(request):
+            return _back(str(e), back)
+        return done_row(request, {"id": entry_id, "title": ""}, str(e), error=True)
+    db.feedback(entry, "read")
+    if not is_htmx(request):
+        return _back(f"Archived: {entry['title']}", back)
+    return done_row(request, entry, "Archived", undo="read")
+
+
+@app.post("/e/{entry_id}/unread")
+async def keep_unread(request: Request, entry_id: int, back: str = Form("/")):
+    """From the reading view: opening archived it; put it back in the list."""
+    try:
+        entry = await _entry(request, entry_id)
+        await request.app.state.mf.set_status([entry_id], "unread")
+    except MinifluxError as e:
+        if is_htmx(request):
+            return done_row(request, {"id": entry_id, "title": ""}, str(e), error=True)
+        return _back(str(e), back)
+    if is_htmx(request):
+        return done_row(request, entry, "Unarchived, back in the list")
+    return _back(f"Unarchived: {entry['title']}", back)
+
+
+@app.post("/e/{entry_id}/undo")
+async def undo(request: Request, entry_id: int):
+    db: DB = request.app.state.db
+    try:
+        await request.app.state.mf.set_status([entry_id], "unread")
+        entry = await _entry(request, entry_id)
+    except MinifluxError as e:
+        return done_row(request, {"id": entry_id, "title": ""}, str(e), error=True)
+    # Undone, so it shouldn't count as feedback
+    db.x("DELETE FROM feedback WHERE id = (SELECT MAX(id) FROM feedback WHERE entry_id = ? AND action = 'read')",
+         (entry_id,))
+    item = rank([entry], db.steering(), now())[0]
+    return card(request, item)
+
+
+@app.post("/e/{entry_id}/save")
+async def save(request: Request, entry_id: int, thought: str = Form(""), back: str = Form("/")):
+    db: DB = request.app.state.db
+    vault: VaultIndex = request.app.state.vault
+    try:
+        entry = await _entry(request, entry_id)
+    except MinifluxError as e:
+        return _save_reply(request, {"id": entry_id, "title": ""}, str(e), error=True, back=back)
+
+    existing = await run_in_threadpool(vault.find, entry["url"])
+    if not existing:
+        known = kinds.known_type(entry)
+        text = full_text(entry.get("content", ""))
+        # Summary-only feeds (like NYT): get the whole article first, so the summary and length are real
+        if known in (None, "article") and len(text.split()) < config.SHORT_TEXT_WORDS:
+            try:
+                fetched = await request.app.state.mf.fetch_content(entry_id)
+                if len((fetched_text := full_text(fetched.get("content") or "")).split()) > len(text.split()):
+                    text = fetched_text
+                    entry["reading_time"] = fetched.get("reading_time") or entry.get("reading_time")
+            except MinifluxError as e:
+                log.info("full text fetch failed for %s: %s", entry_id, e)
+        try:
+            filled = await request.app.state.ai.fill(note_props(entry, config.TZ), text, need_type=known is None)
+        except AIError as e:
+            # Nothing saved: the card stays so the save can be tried again
+            msg = f"Not saved: couldn't write the summary ({e})"
+            if not is_htmx(request):
+                return _back(msg, back)
+            item = rank([entry], db.steering(), now())[0]
+            return card(request, item, error=msg)
+
+    async with request.app.state.save_lock:
+        existing = existing or await run_in_threadpool(vault.find, entry["url"])
+        if existing:
+            text = f"Already in Obsidian: {existing.name}"
+        else:
+            body = render_note(entry, thought, now(), config.PEOPLE_FOLDER, config.TZ,
+                               note_type=known or filled["type"], description=filled["description"])
+            try:
+                path = await run_in_threadpool(write_note, config.CONTENT_DIR, entry, body)
+            except OSError as e:
+                return _save_reply(request, entry, f"Couldn't write the note: {e.strerror or e}", error=True, back=back)
+            db.add_saved(entry_id, entry["url"], str(path.relative_to(config.CONTENT_DIR)))
+            db.feedback(entry, "save")
+            text = f"Saved to Obsidian: {path.name}"
+
+        try:
+            await request.app.state.mf.set_status([entry_id], "read")
+        except MinifluxError as e:
+            return _save_reply(request, entry, f"{text}, but couldn't archive it: {e}", error=True, back=back)
+    return _save_reply(request, entry, text, back=back)
+
+
+def _save_reply(request: Request, entry: dict, text: str, error: bool = False, back: str = "/"):
+    if not is_htmx(request):
+        return _back(text, back)
+    return done_row(request, entry, text, error=error)
+
+
+# ---------- archive ----------
+
+ARCHIVE_PAGE = 50
+
+
+def _ago(stamp: str) -> str:
+    seconds = (now() - parse_time(stamp)).total_seconds()
+    if seconds < 3600:
+        return f"{max(1, int(seconds // 60))} min ago"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}h ago"
+    days = int(seconds // 86400)
+    return "yesterday" if days == 1 else f"{days} days ago"
+
+
+@app.get("/archive", response_class=HTMLResponse)
+async def archive_view(request: Request, q: str = "", page_no: int = Query(0, alias="page"), msg: str | None = None):
+    db: DB = request.app.state.db
+    q = " ".join(q.split())[:200]
+    page_no = max(0, page_no)
+    view = {"q": q, "page": page_no}
+    try:
+        entries, total = await request.app.state.mf.archived(ARCHIVE_PAGE, page_no * ARCHIVE_PAGE, q)
+    except MinifluxError as e:
+        return page(request, "archive.html", error=str(e), items=[], view=view, msg=msg)
+    steer = db.steering()
+    saved = {r["entry_id"] for r in db.q("SELECT entry_id FROM saved")}
+    items = []
+    for e in entries:
+        it = rank([e], steer, now())[0]
+        items.append({"item": it, "archived": _ago(e["changed_at"]), "saved": e["id"] in saved})
+    return page(request, "archive.html", items=items, total=total, view=view, msg=msg, error=None,
+                more=(page_no + 1) * ARCHIVE_PAGE < total)
+
+
+# ---------- reading view ----------
+
+@app.get("/e/{entry_id}", response_class=HTMLResponse)
+async def read_view(request: Request, entry_id: int):
+    db: DB = request.app.state.db
+    try:
+        entry = await _entry(request, entry_id)
+    except MinifluxError as e:
+        return page(request, "entry.html", error=str(e), entry=None)
+    db.feedback(entry, "open")
+    item = rank([entry], db.steering(), now())[0]
+    # Opening an item archives it (marks it read in Miniflux); "Unarchive" puts it back
+    problem, archived_now = None, False
+    if entry["status"] == "unread":
+        try:
+            await request.app.state.mf.set_status([entry_id], "read")
+            archived_now = True
+        except MinifluxError as e:
+            problem = f"Couldn't archive it: {e}"
+    return page(request, "entry.html", entry=entry, item=item, error=None, problem=problem,
+                archived_now=archived_now)
+
+
+@app.post("/e/{entry_id}/full", response_class=HTMLResponse)
+async def load_full_article(request: Request, entry_id: int):
+    try:
+        data = await request.app.state.mf.fetch_content(entry_id)
+    except MinifluxError as e:
+        return HTMLResponse(f'<p class="error">Couldn\'t load the full article. {escape(str(e))}</p>')
+    return HTMLResponse(data.get("content") or '<p class="muted">The page had no article text.</p>')
+
+
+@app.get("/e/{entry_id}/original")
+async def original(request: Request, entry_id: int):
+    try:
+        entry = await _entry(request, entry_id)
+    except MinifluxError as e:
+        return _back(str(e))
+    request.app.state.db.feedback(entry, "original")
+    # Opening the original counts as reading it too
+    if entry["status"] == "unread":
+        try:
+            await request.app.state.mf.set_status([entry_id], "read")
+        except MinifluxError as e:
+            log.warning("couldn't mark %s read: %s", entry_id, e)
+    return RedirectResponse(entry["url"], status_code=302)
+
+
+# ---------- feeds and groups ----------
+
+@app.get("/weights")
+async def old_weights():
+    return RedirectResponse("/feeds", status_code=301)
+
+
+@app.get("/feeds", response_class=HTMLResponse)
+async def feeds_view(request: Request, msg: str | None = None):
+    db: DB = request.app.state.db
+    steer = db.steering()
+    try:
+        feeds = await request.app.state.mf.feeds()
+    except MinifluxError as e:
+        return page(request, "feeds.html", error=str(e), feeds=[], groups=steer.groups, msg=msg)
+    rows = [{"id": f["id"], "title": f["title"], "weight": steer.feed_weights.get(f["id"], 1.0),
+             "groups": steer.memberships.get(f["id"], set()) & set(steer.groups)} for f in feeds]
+    # Feeds not in any group first, so new ones get sorted
+    rows.sort(key=lambda r: (bool(r["groups"]), r["title"].lower()))
+    sizes = {g: sum(g in r["groups"] for r in rows) for g in steer.groups}
+    return page(request, "feeds.html", feeds=rows, groups=steer.groups, sizes=sizes, error=None, msg=msg)
+
+
+def _weight_label(weight: float) -> HTMLResponse:
+    return HTMLResponse("off" if weight == 0 else f"×{weight:g}")
+
+
+@app.post("/feeds/{feed_id}/weight", response_class=HTMLResponse)
+async def set_feed_weight(request: Request, tasks: BackgroundTasks, feed_id: int, weight: float = Form(...)):
+    weight = max(0.0, min(3.0, weight))
+    request.app.state.db.set_weight("feed", feed_id, weight)
+    tasks.add_task(rescore, request.app)
+    return _weight_label(weight)
+
+
+@app.post("/feeds/{feed_id}/groups/{group_id}", response_class=HTMLResponse)
+async def toggle_feed_group(request: Request, tasks: BackgroundTasks, feed_id: int, group_id: int):
+    db: DB = request.app.state.db
+    groups = db.groups()
+    if group_id not in groups:
+        return Response(status_code=404)
+    member = db.toggle_member(feed_id, group_id)
+    tasks.add_task(rescore, request.app)
+    return page(request, "_group_chip.html", feed_id=feed_id, g=groups[group_id], on=member)
+
+
+@app.post("/groups")
+async def add_group(request: Request, name: str = Form("")):
+    name = " ".join(name.split())[:60]
+    if name and request.app.state.db.add_group(name) is None:
+        return RedirectResponse(f"/feeds?msg={quote(f'There is already a group called {name}')}", status_code=303)
+    return RedirectResponse("/feeds", status_code=303)
+
+
+@app.post("/groups/{group_id}/rename")
+async def rename_group(request: Request, group_id: int, name: str = Form("")):
+    name = " ".join(name.split())[:60]
+    if name and not request.app.state.db.rename_group(group_id, name):
+        return RedirectResponse(f"/feeds?msg={quote(f'There is already a group called {name}')}", status_code=303)
+    return RedirectResponse("/feeds", status_code=303)
+
+
+@app.post("/groups/{group_id}/weight", response_class=HTMLResponse)
+async def set_group_weight(request: Request, tasks: BackgroundTasks, group_id: int, weight: float = Form(...)):
+    weight = max(0.0, min(3.0, weight))
+    request.app.state.db.set_group_weight(group_id, weight)
+    tasks.add_task(rescore, request.app)
+    return _weight_label(weight)
+
+
+@app.post("/groups/{group_id}/delete")
+async def delete_group(request: Request, tasks: BackgroundTasks, group_id: int):
+    request.app.state.db.delete_group(group_id)
+    tasks.add_task(rescore, request.app)
+    return RedirectResponse("/feeds", status_code=303)
+
+
+# ---------- rules ----------
+
+@app.get("/rules", response_class=HTMLResponse)
+async def rules_view(request: Request):
+    db: DB = request.app.state.db
+    try:
+        feeds = await request.app.state.mf.feeds()
+        feed_names = {str(f["id"]): f["title"] for f in feeds}
+    except MinifluxError:
+        feeds, feed_names = [], {}
+    groups = db.groups()
+    group_names = {str(g): v["name"] for g, v in groups.items()}
+    today = now().date()
+    rules = [dict(r, live=rule_is_live(r, today)) for r in db.rules()]
+    for r in rules:
+        r["text"] = describe_rule(r, feed_names, group_names)
+    return page(request, "rules.html", rules=rules, types=kinds.TYPES, groups=groups,
+                feeds=sorted(feeds, key=lambda f: f["title"].lower()))
+
+
+def describe_rule(r: dict, feed_names: dict, group_names: dict) -> str:
+    if r["kind"] == "limit":
+        kind, _, target = r["value"].partition(":")
+        if kind == "type":
+            name = f"{target} items"
+        elif kind == "group":
+            name = f"items in {group_names.get(target, 'a deleted group')}"
+        else:
+            name = f"items from {feed_names.get(target, 'feed ' + target)}"
+        return f"At most {r['amount']} {name} a day"
+    what = f"Items with “{r['value']}”" if r["kind"] == "keyword" else f"{r['value'].capitalize()} items"
+    return f"{what}: {r['action']}"
+
+
+@app.post("/rules")
+async def add_rule(request: Request, tasks: BackgroundTasks, kind: str = Form(...), value: str = Form(""), action: str = Form("boost"),
+                   amount: int | None = Form(None), ends_on: str = Form("")):
+    value = value.strip()
+    ok = (
+        (kind == "keyword" and value and action in ("boost", "lower", "hide"))
+        or (kind == "type" and value in kinds.TYPES and action in ("boost", "lower", "hide"))
+        or (kind == "limit" and value.partition(":")[0] in ("type", "feed", "group") and (amount or 0) > 0)
+    )
+    if ok:
+        request.app.state.db.add_rule(kind, value, None if kind == "limit" else action,
+                                      amount if kind == "limit" else None, ends_on)
+        tasks.add_task(rescore, request.app)
+    return RedirectResponse("/rules", status_code=303)
+
+
+@app.post("/rules/{rule_id}/toggle")
+async def toggle_rule(request: Request, tasks: BackgroundTasks, rule_id: int):
+    request.app.state.db.x("UPDATE rules SET active = 1 - active WHERE id = ?", (rule_id,))
+    tasks.add_task(rescore, request.app)
+    return RedirectResponse("/rules", status_code=303)
+
+
+@app.post("/rules/{rule_id}/delete")
+async def delete_rule(request: Request, tasks: BackgroundTasks, rule_id: int):
+    request.app.state.db.x("DELETE FROM rules WHERE id = ?", (rule_id,))
+    tasks.add_task(rescore, request.app)
+    return RedirectResponse("/rules", status_code=303)
+
+
+# ---------- settings ----------
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_view(request: Request):
+    db: DB = request.app.state.db
+    vault: VaultIndex = request.app.state.vault
+    try:
+        version = await request.app.state.mf.version()
+        mf_error = None
+    except MinifluxError as e:
+        version, mf_error = None, str(e)
+    folder_ok = config.CONTENT_DIR.is_dir()
+    notes = await run_in_threadpool(vault.count) if folder_ok else 0
+    broken = await run_in_threadpool(vault.broken) if folder_ok else []
+    return page(request, "settings.html", version=version, mf_error=mf_error, mf_url=config.MINIFLUX_URL,
+                folder=config.CONTENT_DIR, folder_ok=folder_ok, notes=notes, broken=broken,
+                counts=db.counts(), last_id=db.get_state("max_entry_id", "none yet"))

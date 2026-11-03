@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block page %}feeds{% endblock %}
+{% block title %}Feeds · Maniflux{% endblock %}
+{% macro slider(url, weight) %}
+  <input type="range" name="weight" min="0" max="3" step="0.25" value="{{ weight }}"
+         hx-post="{{ url }}" hx-trigger="change" hx-target="next output"
+         oninput="this.nextElementSibling.textContent = this.value == 0 ? 'off' : '×' + this.value">
+  <output>{{ 'off' if weight == 0 else '×%g' % weight }}</output>
+{% endmacro %}
+{% block main %}
+{% if msg %}<p class="flash">{{ msg }}</p>{% endif %}
+<h1>Feeds</h1>
+<p class="muted">Weights: 1 is normal, 0 hides, 3 pushes up. An item's score is multiplied by its feed's weight and by its group's. A feed in several groups gets the highest of their weights.</p>
+
+<h2>Groups</h2>
+{% for gid, g in groups.items() %}
+  <div class="weight group">
+    <form method="post" action="/groups/{{ gid }}/rename" class="rename">
+      <input name="name" value="{{ g.name }}" aria-label="Group name" onchange="this.form.submit()">
+      <span class="muted">{{ sizes[gid] }} feed{{ '' if sizes[gid] == 1 else 's' }}</span>
+    </form>
+    {{ slider("/groups/" ~ gid ~ "/weight", g.weight) }}
+    <form method="post" action="/groups/{{ gid }}/delete" data-confirm="Delete the group “{{ g.name }}”? Its feeds stay; daily limits on this group are removed." onsubmit="return confirm(this.dataset.confirm)">
+      <button class="small">Delete</button>
+    </form>
+  </div>
+{% else %}
+  <p class="muted">No groups yet.</p>
+{% endfor %}
+<form method="post" action="/groups" class="add-group">
+  <input name="name" placeholder="New group, e.g. News" required>
+  <button>Add group</button>
+</form>
+
+<h2>Feeds</h2>
+{% if error %}<div class="problem"><p>{{ error }}</p></div>{% endif %}
+{% for f in feeds %}
+  {% if loop.first and not f.groups %}<h3>Not in a group</h3>{% endif %}
+  {% if not loop.first and f.groups and not loop.previtem.groups %}<h3>In groups</h3>{% endif %}
+  <div class="feed">
+    <div class="weight">
+      <label>{{ f.title }}</label>
+      {{ slider("/feeds/" ~ f.id ~ "/weight", f.weight) }}
+    </div>
+    {% if groups %}
+    <div class="chips">
+      {% for gid, g in groups.items() %}
+        {% with feed_id=f.id, on=(gid in f.groups) %}{% include "_group_chip.html" %}{% endwith %}
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+{% endfor %}
+{% endblock %}

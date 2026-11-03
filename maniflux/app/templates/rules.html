@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block page %}rules{% endblock %}
+{% block title %}Rules · Maniflux{% endblock %}
+{% macro ends() %}
+  <label>Until <input type="date" name="ends_on"></label>
+{% endmacro %}
+{% macro actions() %}
+  <select name="action">
+    <option value="boost">boost</option>
+    <option value="lower">lower</option>
+    <option value="hide">hide</option>
+  </select>
+{% endmacro %}
+{% block main %}
+<h1>Rules</h1>
+
+{% if rules %}
+<ul class="rules">
+  {% for r in rules %}
+    <li class="{{ '' if r.live else 'off' }}">
+      <span>{{ r.text }}{% if r.ends_on %} <span class="muted">until {{ r.ends_on }}</span>{% endif %}
+        {% if not r.active %}<span class="muted">(paused)</span>{% elif not r.live %}<span class="muted">(ended)</span>{% endif %}</span>
+      <span class="rule-actions">
+        <form method="post" action="/rules/{{ r.id }}/toggle"><button>{{ 'Pause' if r.active else 'Resume' }}</button></form>
+        <form method="post" action="/rules/{{ r.id }}/delete"><button>Delete</button></form>
+      </span>
+    </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No rules yet.</p>
+{% endif %}
+
+<h2>Add a rule</h2>
+<form class="rule-form" method="post" action="/rules">
+  <input type="hidden" name="kind" value="keyword">
+  <span>Items with</span>
+  <input name="value" placeholder="word or phrase" required>
+  {{ actions() }}
+  {{ ends() }}
+  <button>Add</button>
+</form>
+<form class="rule-form" method="post" action="/rules">
+  <input type="hidden" name="kind" value="type">
+  <select name="value">{% for t in types %}<option>{{ t }}</option>{% endfor %}</select>
+  <span>items</span>
+  {{ actions() }}
+  {{ ends() }}
+  <button>Add</button>
+</form>
+<form class="rule-form" method="post" action="/rules">
+  <input type="hidden" name="kind" value="limit">
+  <span>At most</span>
+  <input type="number" name="amount" min="1" value="10" required class="num">
+  <select name="value">
+    <optgroup label="Type">{% for t in types %}<option value="type:{{ t }}">{{ t }} items</option>{% endfor %}</optgroup>
+    {% if groups %}<optgroup label="Group">{% for gid, g in groups.items() %}<option value="group:{{ gid }}">items in {{ g.name }}</option>{% endfor %}</optgroup>{% endif %}
+    <optgroup label="Feed">{% for f in feeds %}<option value="feed:{{ f.id }}">{{ f.title }}</option>{% endfor %}</optgroup>
+  </select>
+  <span>a day</span>
+  {{ ends() }}
+  <button>Add</button>
+</form>
+<p class="muted">Boost doubles an item's score, lower halves it, hide takes it off the list (it stays unread in Miniflux). Limits keep the best-scored items for each day. Rules stop applying after their end date.</p>
+{% endblock %}

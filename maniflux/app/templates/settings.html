@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block page %}settings{% endblock %}
+{% block title %}Settings · Maniflux{% endblock %}
+{% block main %}
+<h1>Settings</h1>
+
+<h2>Miniflux</h2>
+{% if mf_error %}
+  <div class="problem"><p>{{ mf_error }}</p></div>
+{% else %}
+  <p>Connected to Miniflux {{ version }} at <code>{{ mf_url }}</code>.</p>
+{% endif %}
+
+<h2>Obsidian</h2>
+{% if folder_ok %}
+  <p>{{ notes }} notes in <code>{{ folder }}</code>.</p>
+{% else %}
+  <div class="problem"><p>The content folder <code>{{ folder }}</code> isn't there. Check <code>VAULT_CONTENT_PATH</code> in <code>.env</code>.</p></div>
+{% endif %}
+
+{% if broken %}
+  <h3>Notes skipped because their frontmatter can't be read</h3>
+  <p class="muted">These can't be checked for duplicates. Fix them in Obsidian if you like; nothing else is affected.</p>
+  <ul class="broken">
+    {% for b in broken %}<li><code>{{ b.path }}</code> <span class="muted">{{ b.problem }}</span></li>{% endfor %}
+  </ul>
+{% endif %}
+
+<h2>Maniflux data</h2>
+<ul>
+  <li>{{ counts.saved }} items saved, {{ counts.feedback }} feedback records</li>
+  <li>{{ counts.scores }} unread items scored, newest entry id seen: {{ last_id }}</li>
+  <li>{{ counts.weights }} custom weights, {{ counts.rules }} rules</li>
+</ul>
+{% endblock %}
