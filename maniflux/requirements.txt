@@ -6,3 +6,4 @@ python-multipart==0.0.20
 pyyaml==6.0.2
 beautifulsoup4==4.12.3
 tzdata==2024.2
+markdown==3.7

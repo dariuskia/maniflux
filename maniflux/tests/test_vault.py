@@ -88,3 +88,22 @@ def test_source_text_keeps_sentences_whole():
     from app.text import full_text
     assert full_text('<p>He backed <a href="#">a petition</a> today.</p><p>Next<br>line</p>') == \
         "He backed a petition today.\nNext\nline"
+
+
+def test_email_authors_are_not_names():
+    from app.text import clean_author
+    assert clean_author("dariuskianersi+caf_=yl6q74d5=news.example.com@gmail.com") == ""
+    assert clean_author("forwarding-noreply@google.com") == ""
+    assert clean_author("bounces+50396554-33ad=news.example.com@em4834.newsletter.oaktown.co") == ""
+    assert clean_author("Jane Doe <jane@example.com>") == "Jane Doe"
+    assert clean_author("Jane Doe") == "Jane Doe"
+    e = make_entry(1, author="dariuskianersi+caf_=x=news.example.com@gmail.com")
+    fm = read_frontmatter(note(e))
+    assert fm["author"] is None
+    fm = read_frontmatter(render_note(e, "", NOW, "people", TZ, note_type="article", description="d",
+                                      authors=["Resident Advisor", "[[x]]"]))
+    assert fm["author"] == ["[[people/Resident Advisor|Resident Advisor]]", "[[people/x|x]]"]
+    # a real author from the feed wins over the model's
+    fm = read_frontmatter(render_note(make_entry(2, author="Jane Doe"), "", NOW, "people", TZ,
+                                      note_type="article", description="d", authors=["Someone Else"]))
+    assert fm["author"] == ["[[people/Jane Doe|Jane Doe]]"]

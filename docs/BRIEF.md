@@ -6,10 +6,10 @@ Maniflux is a small app beside Miniflux that ranks what's new, lets you skim and
 
 ## Scope
 
-Version one is a better place to skim than Miniflux, with saving to Obsidian and simple steering built in. Its only LLM use is writing a saved note's type and description. LLM scoring, digests and anything social come after it works day to day.
+Version one is a better place to skim than Miniflux, with saving to Obsidian and simple steering built in. It uses an LLM for two things: writing a saved note's type and description, and writing digests. LLM scoring and anything social come after it works day to day.
 
 - **In:** a ranked list of unread items, a reading view, archive, save to Obsidian, per-source weights, rules with end dates, a time budget, keyboard shortcuts, a phone-friendly layout.
-- **Out (for now):** LLM scoring and summaries in the list, story grouping, daily or weekly digests, friends' picks, Instagram and Resident Advisor converters, learning from interests in Obsidian.
+- **Out (for now):** LLM scoring and summaries in the list, story grouping, friends' picks, Instagram and Resident Advisor converters, learning from interests in Obsidian.
 - **Unchanged:** Miniflux keeps fetching feeds and holds subscriptions, entries and read state. Obsidian keeps your TBR, notes and archive.
 
 ## How it fits
@@ -35,7 +35,8 @@ Each feature is done when the check in the last column works on your Mac and on 
 | Ranked list | Unread items as cards: title, source, type, length, first lines, and the reason for its rank | Cards load in under 2 seconds with a few hundred unread |
 | Reading view | Clean article view inside the app, plus a link to the original; fetches full text for summary-only feeds | A summary-only feed shows the full article after one click |
 | Archive | Removes the card and marks it read in Miniflux (with Undo). Opening an item, in the reading view or the original, also archives it; "Unarchive" in the reading view puts it back | Reading in Miniflux or the reader shows the same state in both |
-| Archive page | Archived items (read in Miniflux), most recently archived first, with Miniflux's full-text search, Save for ones not saved yet, and Unarchive | An item archived anywhere shows up there; Unarchive puts it back in the list |
+| Digests | Pick groups of feeds, say in plain words what to include ("new EPs and shows in Oakland"), and how often (daily, weekly, every two weeks, monthly). A model reads everything those feeds published since the last digest and writes it up, each point linked to its source. Digests appear on a Digests page and, through a feed Miniflux subscribes to, in the list | A digest arrives on schedule with only what was asked for, and every point links to a real item |
+| Archive page | Archived items (read in Miniflux), most recently archived first, with search, Save for ones not saved yet, and Unarchive | An item archived anywhere shows up there; Unarchive puts it back in the list |
 | Save | Writes the Obsidian note (format below) and marks it read in Miniflux, so it leaves the list | The note appears in the TBR dashboard; saving twice does nothing |
 | Save with a thought | A text box whose words go into the note's Notes section | Your text is in the note under Notes |
 | Source weights | A slider per feed and per group | Moving a slider reorders the list right away |
@@ -53,7 +54,8 @@ The reader talks to Miniflux only through its REST API at `http://miniflux:8080/
 | --- | --- |
 | `GET /v1/entries?status=unread&limit=500` | Building the list; read state always comes from here, so items read elsewhere disappear on their own |
 | `GET /v1/entries?status=unread&after_entry_id=<last>&order=id&direction=asc` | Finding new entries to score, every few minutes |
-| `GET /v1/entries?status=read&order=changed_at&direction=desc&search=…` | The Archive page and its search |
+| `GET /v1/entries?status=read&order=changed_at&direction=desc` | The Archive page |
+| `GET /v1/entries?status=read&changed_after=…` (and `status=unread`) | Keeping the archive's search index current with only what changed |
 | `GET /v1/entries/{id}` | Opening one entry |
 | `GET /v1/entries/{id}/fetch-content` | Full text for summary-only feeds |
 | `PUT /v1/entries` with `{"entry_ids":[…],"status":"read"}` | Archive, opening, save, undo and unarchive |
@@ -92,7 +94,7 @@ archive:
 ```
 
 - `minutes` comes from Miniflux's reading time.
-- `type` comes from the link when it's clear (YouTube, arXiv, podcast audio, Substack and the other Link Ingest rules); otherwise the model picks it. `description` is always written by the model (OpenRouter, `anthropic/claude-haiku-5.5` by default), from the item's text. When the feed only has a summary, Maniflux first fetches the full article through Miniflux; some sites (NYT) refuse, and then the summary is all it has.
+- `type` comes from the link when it's clear (YouTube, arXiv, podcast audio, Substack and the other Link Ingest rules); otherwise the model picks it. `description` is the item's own text when it has fewer than 150 words (a caption, a short post, a feed's summary), with no page fetch; longer items get one written by the model (OpenRouter, `anthropic/claude-haiku-5.5` by default) from their text. With a short item whose type and author are clear, saving makes no model call.
 - If the model call fails, nothing is saved and the card stays, so the save can be tried again.
 - Process New Clips (a QuickAdd macro on the Mac) then links the note at the top of that day's journal entry, below the tasks. It does the same for notes from the Web Clipper and Link Ingest.
 
@@ -117,6 +119,7 @@ The reader keeps one small SQLite file holding only what Miniflux doesn't, keyed
 | `rules` | Rule text, kind (keyword, type, limit by type, feed or group), active, end date |
 | `feedback` | Entry id, action (read, save, open, original), time, plus title, URL and feed id |
 | `saved` | Entry id, URL, path of the Obsidian note |
+| `digest`, `digest_group`, `digest_run` | Each digest's instructions, groups and schedule, and every digest written (text, period, the items it read) |
 | `state` | Highest entry id seen, settings |
 
 Feedback is recorded from day one even though version one barely uses it: it becomes the training signal for LLM scoring later.
@@ -138,7 +141,7 @@ These build on version one in roughly this order; none needs a redesign.
 2. Highlights from the reader added under `## Highlights` in the note.
 3. People and artists: a "Promote to Obsidian" button that creates a `people/` note with tier and feeds; tiers for Bandcamp follows.
 4. Semantic search and categories described in your own words: an embedding per entry (about 75 MB for 50,000 entries, searched in ~10 ms without a vector database), made by a small model through Ollama on the Mac; categories are a description plus a similarity threshold you adjust, combined with ordinary filters, with an optional LLM check on borderline matches.
-5. Grouping the same story across sources, and a daily or weekly digest.
+5. Grouping the same story across sources.
 6. Learning taste from saved items and notes in Obsidian.
 7. Converters for Instagram and Resident Advisor.
 8. Friends' picks: publishing your saves as a feed and using theirs as a signal.
@@ -152,6 +155,7 @@ These build on version one in roughly this order; none needs a redesign.
 - **Saving ends an item's time in Maniflux:** it's marked read in Miniflux and leaves the list. Finishing it in Obsidian (`archive: true`) needs no sync back.
 - **Type and description are filled by Maniflux at save time**, so notes reach Obsidian finished. Process New Clips in Obsidian only links them in the journal.
 - **No undo for save.** Archive can be undone.
+- **Search matches the start of words** ("RIP J" finds "RIP Juan Atkins"), in both the list and the archive. Miniflux's own search only matches whole words, so the archive is searched in Maniflux from an in-memory index kept current with Miniflux's "changed since" filter.
 - **No separate hide.** Archive is the one "done with this" action (it marks the item read in Miniflux), and opening an item archives it.
 - **Feedback rows keep the title, URL and feed id**, so they still mean something after Miniflux deletes the entry.
 - **Video length:** Miniflux's `FETCH_YOUTUBE_WATCH_TIME` is on.

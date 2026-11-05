@@ -8,13 +8,19 @@ CONTENT_DIR = Path(os.environ.get("CONTENT_DIR", "/vault/content"))
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 # Model for each saved note's type and description
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-haiku-5.5")
+# Model that writes digests (picking out relevant parts of long batches uses OPENROUTER_MODEL)
+DIGEST_MODEL = os.environ.get("DIGEST_MODEL", "anthropic/claude-sonnet-5.5")
+# Where Maniflux is opened in a browser, for links in the digests feed
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://127.0.0.1:8090").rstrip("/")
+# Where Miniflux (in Docker) fetches the digests feed from
+DIGEST_FEED_URL = os.environ.get("DIGEST_FEED_URL", "http://maniflux:8090/digests/feed.xml")
 DB_PATH = Path(os.environ.get("DB_PATH", "/data/maniflux.db"))
 PEOPLE_FOLDER = os.environ.get("PEOPLE_FOLDER", "people").strip("/")
 TZ = ZoneInfo(os.environ.get("TZ", "America/Los_Angeles"))
 
 # How many unread entries to load for the list
 LIST_LIMIT = 500
-# Entries with fewer words than this are treated as summaries; saving fetches the full article
+# Entries with fewer words than this are saved with their own text as the description (no summary, no page fetch)
 SHORT_TEXT_WORDS = 150
 # Minutes between background score refreshes
 POLL_MINUTES = 5

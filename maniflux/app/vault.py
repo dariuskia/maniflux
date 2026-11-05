@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 import yaml
 
-from .text import clean_url, parse_time, url_key
+from .text import clean_author, clean_url, parse_time, url_key
 
 
 class _TextDates(yaml.SafeLoader):
@@ -122,7 +122,7 @@ def safe_file_name(s: str) -> str:
 
 
 def split_authors(raw: str) -> list[str]:
-    raw = re.sub(r"^\s*by\s+", "", raw or "", flags=re.I)
+    raw = re.sub(r"^\s*by\s+", "", clean_author(raw), flags=re.I)
     names = re.split(r"\s*(?:,|;|&|\band\b)\s*", raw)
     out, seen = [], set()
     for n in names:
@@ -155,10 +155,12 @@ def note_props(entry: dict, tz) -> dict:
 
 
 def render_note(entry: dict, thought: str, now: datetime, people_folder: str, tz,
-                note_type: str, description: str) -> str:
+                note_type: str, description: str, authors: list[str] | None = None) -> str:
+    """authors: from the model, used when the feed doesn't name a real author."""
     props = note_props(entry, tz)
     minutes = "" if note_type == "book" else (entry.get("reading_time") or "")
-    authors = split_authors(entry.get("author", ""))
+    authors = split_authors(entry.get("author", "")) or [
+        a for a in (re.sub(r"[\[\]|#^]", "", str(x)).strip() for x in authors or []) if a]
 
     lines = [
         "---",

@@ -54,6 +54,9 @@ class FakeMiniflux:
             found = [e for e in self.entries.values() if not status or e["status"] == status]
             if search:
                 found = [e for e in found if all(w in (e["title"] + " " + e["content"]).lower() for w in search.split())]
+            if after := p.get("changed_after"):
+                found = [e for e in found
+                         if datetime.fromisoformat(e["changed_at"].replace("Z", "+00:00")).timestamp() > int(after)]
             order = p.get("order", "published_at")
             found.sort(key=lambda e: e[order], reverse=p.get("direction", "desc") == "desc")
             return httpx.Response(200, json={"total": len(found), "entries": found[offset:offset + limit]})
@@ -69,6 +72,19 @@ class FakeMiniflux:
         if mm := re.fullmatch(r"/v1/entries/(\d+)", path):
             e = self.entries.get(int(mm.group(1)))
             return httpx.Response(200, json=e) if e else httpx.Response(404, json={"error_message": "Not found"})
+        if mm := re.fullmatch(r"/v1/feeds/(\d+)/entries", path):
+            after = int(request.url.params.get("published_after", 0))
+            found = [e for e in self.entries.values() if e["feed_id"] == int(mm.group(1))
+                     and datetime.fromisoformat(e["published_at"].replace("Z", "+00:00")).timestamp() > after]
+            return httpx.Response(200, json={"total": len(found), "entries": found})
+        if re.fullmatch(r"/v1/feeds/\d+/refresh", path):
+            return httpx.Response(204)
+        if path == "/v1/categories":
+            return httpx.Response(200, json=[{"id": 1, "title": "All"}])
+        if path == "/v1/feeds" and m == "POST":
+            body = json.loads(request.content)
+            self.feeds.append(dict(make_feed(90, "Maniflux digests", feed_url=body["feed_url"])))
+            return httpx.Response(201, json={"feed_id": 90})
         if path == "/v1/feeds":
             return httpx.Response(200, json=self.feeds)
         if path == "/v1/version":
@@ -87,9 +103,17 @@ class FakeOpenRouter:
         self.prompts.append(prompt)
         if self.fail:
             return httpx.Response(429, json={"error": {"message": "Rate limited"}})
+        if prompt.startswith("You write a digest"):
+            text = "## Releases\n- A new EP is out [1]\n- Shows this week [2][99]" if "[1]" in prompt or "- " in prompt \
+                else "Nothing qualifies."
+            return httpx.Response(200, json={"choices": [{"message": {"content": text}}]})
+        if prompt.startswith("You are helping write a digest"):
+            return httpx.Response(200, json={"choices": [{"message": {"content": "- picked detail [1]"}}]})
         answer = {"description": "A short summary."}
         if '"type":' in prompt:
             answer["type"] = "Essay"
+        if '"authors":' in prompt:
+            answer["authors"] = ["Resident Advisor"]
         return httpx.Response(200, json={"choices": [{"message": {"content": "Here: " + json.dumps(answer)}}]})
 
 

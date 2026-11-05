@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block page %}digest{% endblock %}
+{% block title %}{{ d.name or "New digest" }} · Maniflux{% endblock %}
+{% block main %}
+{% if running %}<meta http-equiv="refresh" content="5">{% endif %}
+<p><a href="/digests" class="back">← Digests</a></p>
+<h1>{{ d.name or "New digest" }}</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+<form class="digest-form" method="post" action="{{ '/digests/%d/edit' % d.id if d.id else '/digests' }}">
+  <label>Name
+    <input name="name" value="{{ d.name }}" placeholder="Music this week" required>
+  </label>
+
+  <label>What should it include?
+    <textarea name="instructions" rows="5" required placeholder="New EP and album releases from artists I follow, and shows in Oakland and San Francisco in the next month. Skip interviews and gear reviews.">{{ d.instructions }}</textarea>
+  </label>
+  <p class="muted hint">Write it like you'd ask a friend: what to look for, where you are, what to skip.</p>
+
+  <fieldset>
+    <legend>Read from these groups</legend>
+    {% for gid, g in groups.items() %}
+      {% set feeds = group_feeds.get(gid, []) | sort %}
+      <label class="check">
+        <input type="checkbox" name="group" value="{{ gid }}" {{ "checked" if gid in d.group_ids }}>
+        <span>{{ g.name }} <span class="muted">{{ feeds | join(", ") if feeds else "no feeds yet" }}</span></span>
+      </label>
+    {% else %}
+      <p class="muted">No groups yet.</p>
+    {% endfor %}
+    <p class="muted hint">To add a feed, put it in one of these groups on the <a href="/feeds">Feeds page</a>, or make a new group for it there; a group can hold a single feed.</p>
+  </fieldset>
+
+  <fieldset class="schedule">
+    <legend>How often</legend>
+    <select name="frequency" onchange="this.form.dataset.freq = this.value">
+      {% for key, label in frequencies.items() %}<option value="{{ key }}" {{ "selected" if d.frequency == key }}>{{ label }}</option>{% endfor %}
+    </select>
+    <select name="weekday" class="for-week" aria-label="Day of the week">
+      {% for w in weekdays %}<option value="{{ loop.index0 }}" {{ "selected" if d.weekday == loop.index0 }}>on {{ w }}</option>{% endfor %}
+    </select>
+    <select name="monthday" class="for-month" aria-label="Day of the month">
+      {% for n in range(1, 29) %}<option value="{{ n }}" {{ "selected" if d.monthday == n }}>on day {{ n }}</option>{% endfor %}
+    </select>
+    <label class="inline">at <input type="time" name="at" value="{{ d.at }}"></label>
+    <label class="check inline"><input type="checkbox" name="active" value="1" {{ "checked" if d.active }}> On</label>
+  </fieldset>
+
+  <button class="save">{{ "Save" if d.id else "Make digest" }}</button>
+</form>
+<script>
+  // Show the day-of-week or day-of-month picker that fits the frequency
+  document.querySelector(".digest-form").dataset.freq = "{{ d.frequency }}";
+</script>
+
+{% if d.id %}
+  <div class="actions digest-actions">
+    <form method="post" action="/digests/{{ d.id }}/run">
+      <button {{ "disabled" if running }}>{% if running %}<span class="spinner"></span>Writing…{% else %}Run now{% endif %}</button>
+    </form>
+    <form method="post" action="/digests/{{ d.id }}/delete" data-confirm="Delete the digest “{{ d.name }}” and its past digests?" onsubmit="return confirm(this.dataset.confirm)">
+      <button>Delete</button>
+    </form>
+  </div>
+  {% if running %}<p class="muted">Reading the feeds and writing the digest. This page refreshes on its own.</p>{% endif %}
+
+  <h2>Past digests</h2>
+  <ul class="runs">
+    {% for r in runs %}
+      <li>
+        {% if r.status == "done" %}<a href="/digests/runs/{{ r.id }}">{{ run_title(r) }}</a> <span class="muted">{{ r.item_count }} items read</span>
+        {% elif r.status == "running" %}<span class="muted">{{ run_title(r) }}: writing…</span>
+        {% elif r.status == "empty" %}<span class="muted">{{ run_title(r) }}: nothing new from these feeds</span>
+        {% else %}<span class="error">{{ run_title(r) }}: {{ r.error }}</span>{% endif %}
+      </li>
+    {% else %}
+      <li class="muted">None yet. “Run now” makes one straight away.</li>
+    {% endfor %}
+  </ul>
+{% endif %}
+{% endblock %}

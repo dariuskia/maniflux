@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block page %}digests{% endblock %}
+{% block title %}Digests · Maniflux{% endblock %}
+{% block main %}
+{% if msg %}<p class="flash">{{ msg }}</p>{% endif %}
+<div class="heading-row">
+  <h1>Digests</h1>
+  <a class="button save" href="/digests/new">New digest</a>
+</div>
+<p class="muted">A digest reads everything some groups of feeds published since the last one, and writes up what you ask for. Each point links to where it came from.</p>
+
+{% if subscribed is false %}
+  <div class="problem">
+    <p>Digests aren't showing up in your list yet.</p>
+    <form method="post" action="/digests/subscribe"><button class="save">Show digests in my list</button></form>
+    <p class="muted">This subscribes Miniflux to Maniflux's digests feed.</p>
+  </div>
+{% endif %}
+
+{% for d in digests %}
+  {% set r = latest.get(d.id) %}
+  <article class="card digest">
+    <a class="title" href="/digests/{{ d.id }}">{{ d.name }}</a>
+    <div class="meta">
+      <span>{{ d.schedule if d.active else "Paused" }}</span>
+      <span>{{ d.group_names }}</span>
+      {% if d.next_at %}<span>next {{ d.next_at.strftime("%a %b %-d, %H:%M") }}</span>{% endif %}
+    </div>
+    <p class="excerpt muted">{{ d.instructions | truncate(180) }}</p>
+    {% if r %}
+      <div class="reason">
+        {% if r.status == "running" %}Writing a digest now…
+        {% elif r.status == "done" %}Latest: <a href="/digests/runs/{{ r.id }}">{{ run_title(r) }}</a> ({{ r.item_count }} items read)
+        {% elif r.status == "empty" %}Last run: nothing new from these feeds
+        {% else %}<span class="error">Last run failed: {{ r.error }}</span>{% endif %}
+      </div>
+    {% endif %}
+  </article>
+{% else %}
+  <p class="empty">No digests yet. Make one from a few groups of feeds and say what you want to hear about, e.g. “new EP and album releases, and shows in Oakland in the next month”.</p>
+{% endfor %}
+{% endblock %}

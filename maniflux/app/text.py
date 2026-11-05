@@ -31,6 +31,20 @@ def full_text(content: str) -> str:
     return "\n".join(line for line in lines if line)
 
 
+_EMAIL = re.compile(r"\S+@\S+")
+
+
+def clean_author(raw: str) -> str:
+    """The author's name, or "" when Miniflux only has an email address.
+
+    Newsletters through Kill the Newsletter (and Gmail forwarding) carry the sending
+    address as the author, e.g. "me+caf_=…@gmail.com" or "bounces+…@list.example.com".
+    "Jane Doe <jane@example.com>" keeps "Jane Doe".
+    """
+    name = _EMAIL.sub(" ", re.sub(r"<[^>]*>", " ", raw or ""))
+    return re.sub(r"\s+", " ", name).strip(" ,;\"'")
+
+
 def excerpt(text: str, n: int = 220) -> str:
     if len(text) <= n:
         return text

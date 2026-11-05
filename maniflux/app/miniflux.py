@@ -40,11 +40,13 @@ class Miniflux:
         data = await self._call("GET", "/entries", params={"status": "unread", "limit": limit})
         return data["entries"] or []
 
-    async def archived(self, limit: int, offset: int = 0, search: str = "") -> tuple[list[dict], int]:
-        """Read entries, most recently archived first, with Miniflux's full-text search."""
+    async def entries(self, **params) -> dict:
+        """GET /v1/entries with any of its filters (status, changed_after, order, limit, offset…)."""
+        return await self._call("GET", "/entries", params=params)
+
+    async def archived(self, limit: int, offset: int = 0) -> tuple[list[dict], int]:
+        """Read entries, most recently archived first."""
         params = {"status": "read", "order": "changed_at", "direction": "desc", "limit": limit, "offset": offset}
-        if search:
-            params["search"] = search
         data = await self._call("GET", "/entries", params=params)
         return data["entries"] or [], data["total"]
 
@@ -59,6 +61,21 @@ class Miniflux:
 
     async def set_status(self, entry_ids: list[int], status: str):
         await self._call("PUT", "/entries", json={"entry_ids": entry_ids, "status": status})
+
+    async def feed_entries(self, feed_id: int, **params) -> list[dict]:
+        data = await self._call("GET", f"/feeds/{feed_id}/entries", params=params)
+        return data["entries"] or []
+
+    async def refresh_feed(self, feed_id: int):
+        await self._call("PUT", f"/feeds/{feed_id}/refresh")
+
+    async def categories(self) -> list[dict]:
+        return await self._call("GET", "/categories")
+
+    async def subscribe(self, feed_url: str, category_id: int) -> int:
+        data = await self._call("POST", "/feeds", json={"feed_url": feed_url, "category_id": category_id},
+                                timeout=60.0)
+        return data["feed_id"]
 
     async def feeds(self) -> list[dict]:
         return await self._call("GET", "/feeds")

@@ -69,8 +69,14 @@ button, .button {
   align-items: center;
 }
 button.save { background: var(--accent); border-color: var(--accent); color: var(--bg); }
-form.htmx-request button.save { opacity: 0.6; }
-form.htmx-request button.save::after { content: "…"; }
+/* Saving in progress */
+.saving { border-color: var(--accent) !important; }
+.saving button:disabled { opacity: 0.5; cursor: default; }
+.saving button.save:disabled { opacity: 1; gap: 0.5rem; }
+.spinner { width: 0.9em; height: 0.9em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
 form { margin: 0; }
 
 .bar {
@@ -216,3 +222,28 @@ h3 { font-size: 0.95rem; color: var(--muted); margin: 1.25rem 0 0.25rem; }
 .meta .saved { color: var(--accent); }
 .pages { display: flex; justify-content: space-between; gap: 0.5rem; margin-top: 1rem; }
 .pages .chip:only-child { margin-left: auto; }
+
+/* Digests */
+.heading-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.digest-form { display: flex; flex-direction: column; gap: 0.9rem; }
+.digest-form label { display: flex; flex-direction: column; gap: 0.3rem; font-weight: 600; }
+.digest-form input, .digest-form textarea, .digest-form select { font: inherit; font-weight: 400; padding: 0.5rem 0.6rem; min-height: 44px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+.digest-form fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 0.6rem 0.9rem 0.8rem; margin: 0; }
+.digest-form legend { font-weight: 600; padding: 0 0.3rem; }
+.digest-form label.check { flex-direction: row; align-items: flex-start; gap: 0.6rem; font-weight: 400; padding: 0.35rem 0; }
+.digest-form label.check input { min-height: auto; margin-top: 0.3rem; }
+.digest-form .check .muted { font-size: 0.85rem; }
+.digest-form .hint { margin: -0.4rem 0 0; font-size: 0.85rem; }
+.digest-form .schedule { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.digest-form label.inline { flex-direction: row; align-items: center; gap: 0.4rem; font-weight: 400; }
+.digest-form .for-week, .digest-form .for-month { display: none; }
+.digest-form[data-freq="weekly"] .for-week, .digest-form[data-freq="biweekly"] .for-week, .digest-form[data-freq="monthly"] .for-month { display: inline-block; }
+.digest-form > button { align-self: flex-start; }
+.digest-actions { margin-top: 1rem; }
+.digest-actions button:disabled { gap: 0.5rem; opacity: 0.8; }
+.runs { padding-left: 1.1rem; }
+.runs li { margin-bottom: 0.4rem; }
+.digest-body h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+a.cite { font-size: 0.8em; text-decoration: none; vertical-align: super; margin-left: 0.1em; }
+.sources { margin-top: 2rem; font-size: 0.9rem; }
+.sources li { margin-bottom: 0.3rem; }

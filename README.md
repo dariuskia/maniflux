@@ -4,7 +4,7 @@ A small reading app that sits beside [Miniflux](https://miniflux.app). It ranks 
 
 Miniflux keeps fetching your feeds and holds the entries. Maniflux reads them live through Miniflux's API and stores only its own things (weights, groups, rules, what you saved) in a small SQLite file.
 
-This repo also holds the rest of the setup around it: Miniflux in Docker, scripts for a self-hosted [Kill the Newsletter](https://github.com/leafac/kill-the-newsletter) server that turns email newsletters into feeds, and the Obsidian scripts the notes are made for.
+This repo also holds the rest of the setup around it: Miniflux in Docker, scripts for a self-hosted [Kill the Newsletter](https://github.com/leafac/kill-the-newsletter) server that turns email newsletters into feeds, ig2rss, which turns Instagram accounts into feeds, and the Obsidian scripts the notes are made for.
 
 ![The ranked list](docs/screenshots/list.png)
 
@@ -20,9 +20,10 @@ This repo also holds the rest of the setup around it: Miniflux in Docker, script
 - **Ranked list** of unread items, each with the reason for its place ("5h old · Making things ×1.5"). Tabs for All, Read, Watch and Listen; a chip per group of feeds; search with `/`.
 - **Time budget:** pick 10, 20 or 45 minutes and get the best items that fit, using reading time and video length.
 - **Reading view** with a button to fetch the full article when a feed only sends a summary. Opening an item archives it; Unarchive puts it back.
-- **Save to Obsidian:** writes a note to your vault's `content/` folder with title, link, source, author, dates, length, type and a 2–3 sentence description (written by a model through OpenRouter), plus an optional thought of your own. A link already in the vault is never saved twice.
+- **Save to Obsidian:** writes a note to your vault's `content/` folder with title, link, source, author, dates, length, type and a description (the item's own text when it's under 150 words, otherwise 2–3 sentences written by a model through OpenRouter), plus an optional thought of your own. A link already in the vault is never saved twice.
 - **Steering:** a weight per feed and per group, and rules: keywords or types to boost, lower or hide, and daily limits ("at most 10 news items a day"), each with an optional end date.
-- **Archive page** with Miniflux's full-text search.
+- **Digests:** pick some groups of feeds, say in plain words what you want ("new EP and album releases, and shows in Oakland in the next month") and how often. A model reads what those feeds published and writes it up, every point linked to its source. Digests arrive in your list like any article.
+- **Archive page** with search that matches as you type ("RIP J" finds "RIP Juan Atkins").
 - **Keyboard first, phone friendly:** j/k move, o open, v original, s save, S save with a note, x archive, u undo, 1–4 tabs, / search. Single column with large tap targets on a phone.
 
 | Groups and weights | Archive |
@@ -60,6 +61,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 - **YouTube channel:** paste the channel's page URL; Miniflux finds its feed.
 - **Most sites:** paste the site's URL; Miniflux finds the feed if there is one.
 - **Newsletters with no feed:** `kill-the-newsletter/new-inbox.sh "Name"`, subscribe with the printed address, and add the printed feed URL. See [kill-the-newsletter/README.md](kill-the-newsletter/README.md) for setting up the server.
+- **Instagram accounts:** on ig2rss's page (http://127.0.0.1:8091), preview an account's latest posts or add it straight away, then add the feed address it shows, `http://ig2rss:8091/feeds/<username>.xml`. See [ig2rss/README.md](ig2rss/README.md).
 
 Back up Miniflux with:
 
@@ -72,8 +74,9 @@ docker compose exec -T db pg_dump -U miniflux miniflux > backup-$(date +%F).sql
 | Folder / file | What it is |
 |---|---|
 | `maniflux/` | The app: FastAPI, SQLite and server-rendered HTML with htmx, no build step |
-| `docker-compose.yml`, `.env.example` | Miniflux, its database and Maniflux |
+| `docker-compose.yml`, `.env.example` | Miniflux, its database, Maniflux and ig2rss |
 | `kill-the-newsletter/` | Scripts for a self-hosted newsletters-to-feeds server |
+| `ig2rss/` | Turns Instagram accounts into feeds for Miniflux, using Instaloader |
 | `obsidian/` | Copies of the Obsidian QuickAdd scripts and dashboard the notes are made for, including Process New Clips, which links each new note in a daily journal |
 | `docs/BRIEF.md` | Maniflux's scope, design and decisions |
 | `docs/SETUP-NOTES.md` | Notes about your own machines; local only, not in git |

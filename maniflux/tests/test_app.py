@@ -48,30 +48,48 @@ def test_opening_the_original_marks_read(client, fake):
     assert fake.entries[2]["status"] == "read"
 
 
-def test_save_fills_type_and_description(client, fake, ai):
+def test_short_item_uses_its_own_text_as_description(client, fake, ai):
     from app.vault import read_frontmatter
-    # a short summary-only entry with an unclear type
+    # a short item with an unclear type: the model is only asked for the type, and no page is fetched
     fake.entries[1]["url"] = "https://www.nytimes.com/2026/10/30/x.html"
+    fake.entries[1]["content"] = "<p>A caption,</p><p>on two lines.</p>"
     client.post("/e/1/save", headers=HX)
     note = next(client.content_dir.glob("*.md"))
     fm = read_frontmatter(note.read_text())
-    assert fm["description"] == "A short summary."
+    assert fm["description"] == "A caption, on two lines."
     assert fm["type"] == "article" and fm["tags"] == ["clippings", "article"]  # "Essay" counts as article
-    assert fm["minutes"] == 9  # from the full article
+    assert fm["minutes"] == 5
     assert "%%" not in note.read_text() and "{{" not in note.read_text()
-    # the full article was fetched first and given to the model
-    assert any(c[1] == "/v1/entries/1/fetch-content" for c in fake.calls)
-    assert "The full article." in ai.prompts[0] and "title: Fresh post" in ai.prompts[0]
+    assert '"type":' in ai.prompts[0] and '"description":' not in ai.prompts[0]
+    assert not any(c[1].endswith("/fetch-content") for c in fake.calls)
 
 
-def test_known_type_isnt_asked_and_video_isnt_fetched(client, fake, ai):
+def test_long_item_gets_a_written_description(client, fake, ai):
+    from app.vault import read_frontmatter
+    fake.entries[1]["content"] = "<p>" + "word " * 200 + "</p>"
+    client.post("/e/1/save", headers=HX)
+    fm = read_frontmatter(next(client.content_dir.glob("*.md")).read_text())
+    assert fm["description"] == "A short summary."
+    assert '"description":' in ai.prompts[0] and "title: Fresh post" in ai.prompts[0]
+    assert not any(c[1].endswith("/fetch-content") for c in fake.calls)
+
+
+def test_short_item_with_known_type_and_author_needs_no_model(client, fake, ai):
     from app.vault import read_frontmatter
     fake.entries[1]["url"] = "https://www.youtube.com/watch?v=abc"
     client.post("/e/1/save", headers=HX)
     fm = read_frontmatter(next(client.content_dir.glob("*.md")).read_text())
-    assert fm["type"] == "video"
-    assert '"type":' not in ai.prompts[0]
+    assert fm["type"] == "video" and fm["description"] == "Some text."
+    assert ai.prompts == []
     assert not any(c[1].endswith("/fetch-content") for c in fake.calls)
+
+
+def test_short_item_without_author_asks_only_for_authors(client, fake, ai):
+    fake.entries[1]["url"] = "https://www.youtube.com/watch?v=abc"
+    fake.entries[1]["author"] = ""
+    client.post("/e/1/save", headers=HX)
+    assert '"authors":' in ai.prompts[0]
+    assert '"description":' not in ai.prompts[0] and '"type":' not in ai.prompts[0]
 
 
 def test_summary_failure_saves_nothing_and_keeps_card(client, fake, ai):
@@ -246,10 +264,11 @@ def test_archive_page(client, fake):
     saved_card = text[text.index('id="e-3"'):]
     assert 'class="saved">saved' in saved_card.split("</article>")[0]
     assert 'data-key="s"' not in saved_card.split("</article>")[0]
-    # search goes to Miniflux
-    text = client.get("/archive?q=housing").text
-    assert "Housing is too expensive" in text and "Fresh post" not in text
-    assert any(c[2].get("search") == "housing" and c[2].get("status") == "read" for c in fake.calls)
+    # search matches the start of words, so partial words work while typing
+    for q in ("housing", "Hous", "too exp"):
+        text = client.get("/archive", params={"q": q}).text
+        assert "Housing is too expensive" in text and "Fresh post" not in text, q
+    assert "Nothing archived matches" in client.get("/archive?q=ousing").text
 
     r = client.post("/e/1/unread", headers=HX)
     assert "Unarchived, back in the list" in r.text and fake.entries[1]["status"] == "unread"
@@ -258,3 +277,33 @@ def test_archive_page(client, fake):
 def test_reading_view_actions_can_return_to_the_archive(client):
     r = client.post("/e/2/unread", data={"back": "/archive?q=old"}, follow_redirects=False)
     assert r.headers["location"].startswith("/archive?q=old&msg=Unarchived")
+
+
+def test_archive_search_index_keeps_up(client, fake):
+    from datetime import datetime, timezone
+    stamp = lambda: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fake.entries[2]["status"], fake.entries[2]["changed_at"] = "read", stamp()
+    assert "Old post" in client.get("/archive?q=old").text
+    # archived after the index was loaded: picked up by the next search
+    index = client.app.state.archive_index
+    index.synced_at -= 120
+    fake.entries[1]["status"], fake.entries[1]["changed_at"] = "read", stamp()
+    assert "Fresh post" in client.get("/archive?q=fre").text
+    # unarchived: dropped
+    index.synced_at -= 120
+    fake.entries[2]["status"], fake.entries[2]["changed_at"] = "unread", stamp()
+    assert "Old post" not in client.get("/archive?q=old").text
+
+
+def test_newsletter_save_asks_model_for_author(client, fake, ai):
+    from app.vault import read_frontmatter
+    fake.entries[1]["author"] = "me+caf_=abc=news.example.com@gmail.com"
+    client.post("/e/1/save", headers=HX)
+    fm = read_frontmatter(next(client.content_dir.glob("*.md")).read_text())
+    assert fm["author"] == ["[[people/Resident Advisor|Resident Advisor]]"]
+    assert '"authors":' in ai.prompts[-1] and "caf_" not in ai.prompts[-1]
+    # a real author: not asked
+    client.post("/e/3/save", headers=HX)
+    assert '"authors":' not in ai.prompts[-1]
+    # the reading view doesn't show the address either
+    assert "caf_" not in client.get("/e/1").text

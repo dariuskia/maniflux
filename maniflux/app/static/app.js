@@ -10,6 +10,41 @@
     if (!form.hidden) form.querySelector("textarea").focus();
   }
 
+  // ---------- saving: a save takes a few seconds (full article, then the summary), so show it ----------
+  const isSave = (form) => form?.matches?.('form[action$="/save"]');
+
+  function showSaving(form) {
+    const box = form.closest(".card, .reader");
+    if (!box || box.classList.contains("saving")) return;
+    box.classList.add("saving");
+    box.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    const button = form.querySelector("button.save");
+    button?.replaceChildren(Object.assign(document.createElement("span"), { className: "spinner" }), "Saving…");
+    button?.setAttribute("aria-busy", "true");
+  }
+
+  function undoSaving(form) {
+    const box = form?.closest(".card, .reader");
+    if (!box?.classList.contains("saving")) return;
+    box.classList.remove("saving");
+    box.querySelectorAll("button").forEach((b) => (b.disabled = false));
+    box.querySelectorAll("button.save").forEach((b) => {
+      b.textContent = "Save";
+      b.removeAttribute("aria-busy");
+    });
+  }
+
+  // Cards save with htmx; the reading view saves with a normal form post
+  document.body.addEventListener("htmx:beforeRequest", (e) => { if (isSave(e.detail.elt)) showSaving(e.detail.elt); });
+  for (const ev of ["htmx:sendError", "htmx:responseError"]) {
+    document.body.addEventListener(ev, (e) => { if (isSave(e.detail.elt)) undoSaving(e.detail.elt); });
+  }
+  document.addEventListener("submit", (e) => {
+    if (isSave(e.target) && !e.target.hasAttribute("hx-post")) showSaving(e.target);
+  });
+  // Coming back with the Back button to a page left mid-save
+  window.addEventListener("pageshow", () => document.querySelectorAll(".saving form").forEach(undoSaving));
+
   document.addEventListener("click", (e) => {
     const btn = e.target.closest(".note-toggle");
     if (btn) toggleNote(btn.closest(".card, .reader"));
