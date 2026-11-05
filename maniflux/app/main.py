@@ -1,9 +1,11 @@
 import asyncio
 import hashlib
+import json
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from html import escape
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
@@ -14,12 +16,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import config, kinds
+from . import config, digests, kinds
 from .ai import AIError, Summarizer
 from .db import DB
 from .miniflux import Miniflux, MinifluxError
 from .ranking import SHOW, Item, budget_set, rank, rule_is_live, search, shown_by
-from .text import full_text, parse_time
+from .search import ArchiveIndex
+from .text import clean_author, full_text, parse_time
 from .vault import VaultIndex, note_props, render_note, write_note
 
 log = logging.getLogger("maniflux")
@@ -63,6 +66,90 @@ async def rescore(app: FastAPI):
         log.warning("score refresh skipped: %s", e)
 
 
+# ---------- digests: running and scheduling ----------
+
+async def run_digest(app: FastAPI, digest_id: int) -> int | None:
+    """Write one digest from what its groups' feeds published since the last one. Returns the run's id."""
+    db: DB = app.state.db
+    running: set = app.state.digests_running
+    d = db.digest(digest_id)
+    if d is None or digest_id in running:
+        return None
+    running.add(digest_id)
+    end = datetime.now(timezone.utc)
+    last = next((r for r in db.runs(digest_id, limit=50) if r["status"] in ("done", "empty")), None)
+    start = parse_time(last["period_end"]) if last else end - timedelta(days=digests.FIRST_LOOKBACK[d["frequency"]])
+    stamp = lambda t: t.isoformat(timespec="seconds")
+    run_id = db.x("INSERT INTO digest_run (digest_id, status, period_start, period_end, started_at) "
+                  "VALUES (?, 'running', ?, ?, ?)", (digest_id, stamp(start), stamp(end), stamp(end)))
+    try:
+        steer = db.steering()
+        feed_ids = sorted(f for f, groups in steer.memberships.items() if groups & d["group_ids"])
+        entries = []
+        for f in feed_ids:
+            got = await app.state.mf.feed_entries(f, published_after=int(start.timestamp()), limit=500)
+            entries += [e for e in got if start < parse_time(e["published_at"]) <= end]
+        items = digests.to_items(entries)
+        listing = json.dumps([{k: it[k] for k in ("n", "id", "title", "url", "feed", "date")} for it in items])
+        if not items:
+            db.x("UPDATE digest_run SET status = 'empty', items = ?, finished_at = ? WHERE id = ?",
+                 (listing, stamp(datetime.now(timezone.utc)), run_id))
+            return run_id
+        body = await digests.write(app.state.ai, config.DIGEST_MODEL, config.OPENROUTER_MODEL, d, items,
+                                   start.astimezone(config.TZ), end.astimezone(config.TZ))
+        db.x("UPDATE digest_run SET status = 'done', item_count = ?, items = ?, body = ?, finished_at = ? WHERE id = ?",
+             (len(items), listing, body.strip(), stamp(datetime.now(timezone.utc)), run_id))
+        await _refresh_digest_feed(app)
+    except (MinifluxError, AIError) as e:
+        db.x("UPDATE digest_run SET status = 'error', error = ?, finished_at = ? WHERE id = ?",
+             (str(e), stamp(datetime.now(timezone.utc)), run_id))
+    except Exception as e:
+        log.exception("digest %s failed", digest_id)
+        db.x("UPDATE digest_run SET status = 'error', error = ?, finished_at = ? WHERE id = ?",
+             (f"Something went wrong ({type(e).__name__})", stamp(datetime.now(timezone.utc)), run_id))
+    finally:
+        running.discard(digest_id)
+    return run_id
+
+
+async def _digest_feed_id(app: FastAPI) -> int | None:
+    feeds = await app.state.mf.feeds()
+    return next((f["id"] for f in feeds if f["feed_url"] == config.DIGEST_FEED_URL), None)
+
+
+async def _refresh_digest_feed(app: FastAPI):
+    """Ask Miniflux to fetch the digests feed now, so a new digest shows up in the list straight away."""
+    try:
+        feed_id = await _digest_feed_id(app)
+        if feed_id:
+            await app.state.mf.refresh_feed(feed_id)
+    except MinifluxError as e:
+        log.info("couldn't refresh the digests feed: %s", e)
+
+
+def _last_finished(db: DB, digest_id: int) -> datetime | None:
+    last = next((r for r in db.runs(digest_id, limit=50) if r["status"] in ("done", "empty")), None)
+    return parse_time(last["finished_at"]).astimezone(config.TZ) if last else None
+
+
+async def digests_forever(app: FastAPI):
+    """Every minute: run any digest that's due."""
+    while True:
+        try:
+            for d in app.state.db.digests():
+                if not d["active"] or not d["next_run_at"]:
+                    continue
+                local_now = now()
+                if parse_time(d["next_run_at"]) <= local_now:
+                    nxt = digests.next_run(d, local_now, _last_finished(app.state.db, d["id"]))
+                    app.state.db.x("UPDATE digest SET next_run_at = ? WHERE id = ?",
+                                   (nxt.isoformat(timespec="seconds"), d["id"]))
+                    await run_digest(app, d["id"])
+        except Exception:
+            log.exception("digest schedule check failed")
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if not hasattr(app.state, "mf"):
@@ -74,12 +161,14 @@ async def lifespan(app: FastAPI):
     if not hasattr(app.state, "ai"):
         app.state.ai = Summarizer(config.OPENROUTER_API_KEY, config.OPENROUTER_MODEL)
     app.state.save_lock = asyncio.Lock()
-    poller = None
+    app.state.archive_index = ArchiveIndex()
+    app.state.digests_running = set()
+    tasks = []
     if os.environ.get("MANIFLUX_NO_POLL") != "1":
-        poller = asyncio.create_task(poll_forever(app))
+        tasks = [asyncio.create_task(poll_forever(app)), asyncio.create_task(digests_forever(app))]
     yield
-    if poller:
-        poller.cancel()
+    for t in tasks:
+        t.cancel()
     await app.state.mf.close()
     await app.state.ai.close()
 
@@ -98,6 +187,7 @@ def _static_version() -> str:
 
 
 templates.env.globals["v"] = _static_version()
+templates.env.filters["author"] = clean_author
 
 
 def is_htmx(request: Request) -> bool:
@@ -220,20 +310,17 @@ async def save(request: Request, entry_id: int, thought: str = Form(""), back: s
     if not existing:
         known = kinds.known_type(entry)
         text = full_text(entry.get("content", ""))
-        # Summary-only feeds (like NYT): get the whole article first, so the summary and length are real
-        if known in (None, "article") and len(text.split()) < config.SHORT_TEXT_WORDS:
-            try:
-                fetched = await request.app.state.mf.fetch_content(entry_id)
-                if len((fetched_text := full_text(fetched.get("content") or "")).split()) > len(text.split()):
-                    text = fetched_text
-                    entry["reading_time"] = fetched.get("reading_time") or entry.get("reading_time")
-            except MinifluxError as e:
-                log.info("full text fetch failed for %s: %s", entry_id, e)
+        need_authors = not clean_author(entry.get("author", ""))
+        # Short items (a caption, a short post, a feed's summary): their own text is the description, as is
+        short = len(text.split()) < config.SHORT_TEXT_WORDS
+        filled = {"description": " ".join(text.split())} if short else {}
         try:
-            filled = await request.app.state.ai.fill(note_props(entry, config.TZ), text, need_type=known is None)
+            if not short or known is None or need_authors:
+                filled |= await request.app.state.ai.fill(note_props(entry, config.TZ), text, need_type=known is None,
+                                                          need_authors=need_authors, need_description=not short)
         except AIError as e:
             # Nothing saved: the card stays so the save can be tried again
-            msg = f"Not saved: couldn't write the summary ({e})"
+            msg = f"Not saved: couldn't fill in the note ({e})"
             if not is_htmx(request):
                 return _back(msg, back)
             item = rank([entry], db.steering(), now())[0]
@@ -245,7 +332,8 @@ async def save(request: Request, entry_id: int, thought: str = Form(""), back: s
             text = f"Already in Obsidian: {existing.name}"
         else:
             body = render_note(entry, thought, now(), config.PEOPLE_FOLDER, config.TZ,
-                               note_type=known or filled["type"], description=filled["description"])
+                               note_type=known or filled["type"], description=filled["description"],
+                               authors=filled.get("authors"))
             try:
                 path = await run_in_threadpool(write_note, config.CONTENT_DIR, entry, body)
             except OSError as e:
@@ -289,7 +377,15 @@ async def archive_view(request: Request, q: str = "", page_no: int = Query(0, al
     page_no = max(0, page_no)
     view = {"q": q, "page": page_no}
     try:
-        entries, total = await request.app.state.mf.archived(ARCHIVE_PAGE, page_no * ARCHIVE_PAGE, q)
+        if q:
+            # Searched in Maniflux, so partial words match while typing (Miniflux only matches whole words)
+            index: ArchiveIndex = request.app.state.archive_index
+            await index.refresh(request.app.state.mf)
+            found = index.search(q)
+            total = len(found)
+            entries = found[page_no * ARCHIVE_PAGE:(page_no + 1) * ARCHIVE_PAGE]
+        else:
+            entries, total = await request.app.state.mf.archived(ARCHIVE_PAGE, page_no * ARCHIVE_PAGE)
     except MinifluxError as e:
         return page(request, "archive.html", error=str(e), items=[], view=view, msg=msg)
     steer = db.steering()
@@ -348,6 +444,136 @@ async def original(request: Request, entry_id: int):
         except MinifluxError as e:
             log.warning("couldn't mark %s read: %s", entry_id, e)
     return RedirectResponse(entry["url"], status_code=302)
+
+
+# ---------- digests: pages ----------
+
+def _digest_view(d: dict, groups: dict) -> dict:
+    return dict(d, schedule=digests.describe_schedule(d),
+                group_names=", ".join(sorted(groups[g]["name"] for g in d["group_ids"] if g in groups)),
+                next_at=parse_time(d["next_run_at"]).astimezone(config.TZ) if d["next_run_at"] and d["active"] else None)
+
+
+@app.get("/digests", response_class=HTMLResponse)
+async def digests_view(request: Request, msg: str | None = None):
+    db: DB = request.app.state.db
+    try:
+        subscribed = await _digest_feed_id(request.app) is not None
+    except MinifluxError:
+        subscribed = None
+    latest = {}
+    for r in db.runs(limit=200):
+        latest.setdefault(r["digest_id"], r)
+    groups = db.groups()
+    return page(request, "digests.html", digests=[_digest_view(d, groups) for d in db.digests()], latest=latest,
+                subscribed=subscribed, msg=msg, run_title=digests.run_title)
+
+
+async def _form_page(request: Request, d: dict, error: str | None = None):
+    db: DB = request.app.state.db
+    names = await _feed_names(request)
+    group_feeds = {}
+    for feed_id, group_ids in db.memberships().items():
+        for g in group_ids:
+            if feed_id in names:
+                group_feeds.setdefault(g, []).append(names[feed_id])
+    return page(request, "digest_form.html", d=d, groups=db.groups(), group_feeds=group_feeds, error=error,
+                frequencies=digests.FREQUENCIES, weekdays=digests.WEEKDAYS,
+                runs=db.runs(d["id"]) if d.get("id") else [], run_title=digests.run_title,
+                running=d.get("id") in request.app.state.digests_running)
+
+
+async def _feed_names(request: Request) -> dict[int, str]:
+    try:
+        return {f["id"]: f["title"] for f in await request.app.state.mf.feeds()}
+    except MinifluxError:
+        return {}
+
+
+@app.get("/digests/new", response_class=HTMLResponse)
+async def new_digest(request: Request):
+    return await _form_page(request, {"id": None, "name": "", "instructions": "", "frequency": "weekly", "weekday": 0,
+                                "monthday": 1, "at": "08:00", "active": 1, "group_ids": set()})
+
+
+@app.get("/digests/{digest_id:int}", response_class=HTMLResponse)
+async def edit_digest(request: Request, digest_id: int):
+    d = request.app.state.db.digest(digest_id)
+    if d is None:
+        return RedirectResponse("/digests", status_code=303)
+    return await _form_page(request, d)
+
+
+@app.post("/digests")
+@app.post("/digests/{digest_id:int}/edit")
+async def save_digest(request: Request, digest_id: int | None = None):
+    db: DB = request.app.state.db
+    form = await request.form()
+    groups = db.groups()
+    d = {
+        "id": digest_id,
+        "name": " ".join(str(form.get("name", "")).split())[:80],
+        "instructions": str(form.get("instructions", "")).strip()[:4000],
+        "frequency": form.get("frequency") if form.get("frequency") in digests.FREQUENCIES else "weekly",
+        "weekday": min(6, max(0, int(form.get("weekday") or 0))),
+        "monthday": min(28, max(1, int(form.get("monthday") or 1))),
+        "at": form.get("at") if re.fullmatch(r"\d{2}:\d{2}", str(form.get("at", ""))) else "08:00",
+        "active": 1 if form.get("active") else 0,
+        "group_ids": {int(g) for g in form.getlist("group") if str(g).isdigit() and int(g) in groups},
+    }
+    problem = (not d["name"] and "Give the digest a name.") or (not d["instructions"] and "Say what the digest "
+               "should include.") or (not d["group_ids"] and "Pick at least one group of feeds.")
+    if problem:
+        return await _form_page(request, d, error=problem)
+    last = _last_finished(db, digest_id) if digest_id else None
+    d["next_run_at"] = digests.next_run(d, now(), last).isoformat(timespec="seconds") if d["active"] else None
+    digest_id = db.save_digest(digest_id, d, d["group_ids"])
+    return RedirectResponse(f"/digests/{digest_id}", status_code=303)
+
+
+@app.post("/digests/{digest_id:int}/run")
+async def run_now(request: Request, digest_id: int):
+    if request.app.state.db.digest(digest_id) is not None:
+        asyncio.create_task(run_digest(request.app, digest_id))
+        await asyncio.sleep(0.2)  # so the page shows it running
+    return RedirectResponse(f"/digests/{digest_id}", status_code=303)
+
+
+@app.post("/digests/{digest_id:int}/delete")
+async def delete_digest(request: Request, digest_id: int):
+    request.app.state.db.delete_digest(digest_id)
+    return RedirectResponse("/digests", status_code=303)
+
+
+@app.get("/digests/runs/{run_id:int}", response_class=HTMLResponse)
+async def digest_run_view(request: Request, run_id: int):
+    r = request.app.state.db.run(run_id)
+    if r is None:
+        return RedirectResponse("/digests", status_code=303)
+    items = json.loads(r["items"] or "[]")
+    return page(request, "digest_run.html", r=r, title=digests.run_title(r),
+                body=digests.render(r["body"] or "", items) if r["body"] else "",
+                sources=digests.sources_html(items) if items else "")
+
+
+@app.get("/digests/feed.xml")
+async def digest_feed(request: Request):
+    runs = [r for r in request.app.state.db.runs(limit=30) if r["status"] == "done"]
+    return Response(digests.atom(runs, config.PUBLIC_URL), media_type="application/atom+xml")
+
+
+@app.post("/digests/subscribe")
+async def subscribe_digests(request: Request):
+    """Subscribe Miniflux to the digests feed, so digests show up in the list."""
+    mf = request.app.state.mf
+    try:
+        if await _digest_feed_id(request.app) is None:
+            categories = await mf.categories()
+            await mf.subscribe(config.DIGEST_FEED_URL, min(c["id"] for c in categories))
+        msg = "Digests will now show up in your list."
+    except MinifluxError as e:
+        msg = f"Couldn't add the digests feed to Miniflux: {e}"
+    return RedirectResponse(f"/digests?msg={quote(msg)}", status_code=303)
 
 
 # ---------- feeds and groups ----------

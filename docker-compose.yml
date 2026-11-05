@@ -37,10 +37,30 @@ services:
       # Writes each saved note's type and description
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-haiku-5.5}
+      DIGEST_MODEL: ${DIGEST_MODEL:-anthropic/claude-sonnet-5.5}
       TZ: ${TZ:-America/Los_Angeles}
     volumes:
       - ${VAULT_CONTENT_PATH}:/vault/content
       - maniflux-data:/data
+
+  # ig2rss: one RSS feed per Instagram account, for Miniflux. Status page: http://127.0.0.1:8091
+  # Miniflux subscribes to http://ig2rss:8091/feeds/<username>.xml. See ig2rss/README.md.
+  ig2rss:
+    build: ./ig2rss
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8091:8091"
+    environment:
+      IG2RSS_LOGIN: ${IG2RSS_LOGIN:-}
+      IG2RSS_POLL_HOURS: ${IG2RSS_POLL_HOURS:-6}
+      IG2RSS_REELS: ${IG2RSS_REELS:-0}
+      TZ: ${TZ:-America/Los_Angeles}
+    # Look up names directly, so the Mac's hosts-file block on Instagram doesn't apply to ig2rss
+    dns:
+      - 1.1.1.1
+    volumes:
+      # Accounts, cached posts and the Instagram session file
+      - ig2rss-data:/data
 
   db:
     image: postgres:17-alpine
@@ -59,3 +79,4 @@ services:
 volumes:
   miniflux-db:
   maniflux-data:
+  ig2rss-data:

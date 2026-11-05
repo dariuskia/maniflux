@@ -1,0 +1,6 @@
+fastapi==0.115.6
+uvicorn==0.34.0
+python-multipart==0.0.20
+instaloader==4.16
+pillow==13.0.0
+tzdata==2026.6

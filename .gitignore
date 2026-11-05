@@ -8,6 +8,10 @@ docs/SETUP-NOTES.md
 data/
 backup-*.sql
 kill-the-newsletter/.hostname
+# Instagram session files for ig2rss: they log in as you
+session-*
+ig-session*
+ig2rss/session*
 
 # Python
 __pycache__/
