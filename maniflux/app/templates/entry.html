@@ -14,7 +14,7 @@
   <h1>{{ entry.title or "Untitled" }}</h1>
   <div class="meta">
     <span>{{ entry.feed.title }}</span>
-    {% if entry.author %}<span>{{ entry.author }}</span>{% endif %}
+    {% if entry.author | author %}<span>{{ entry.author | author }}</span>{% endif %}
     <span>{{ item.type }}</span>
     {% if item.minutes %}<span>{{ item.minutes }} min</span>{% endif %}
   </div>

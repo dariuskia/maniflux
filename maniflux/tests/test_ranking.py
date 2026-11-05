@@ -71,7 +71,11 @@ def test_type_rule_and_limit():
     vids = [make_entry(i, url=f"https://www.youtube.com/watch?v={i}", hours_old=i) for i in range(1, 6)]
     items = rank(vids, Steering(rules=[rule("type", "video", "lower")]), NOW)
     assert "videos lowered" in items[0].reason
-    items = rank(vids, Steering(rules=[rule("limit", "type:video", amount=2)]), NOW)
+    # all on one day, so the daily limit applies to all five whatever time the test runs
+    noon = NOW.replace(hour=12, minute=0, second=0, microsecond=0)
+    for v in vids:
+        v["published_at"] = (noon - timedelta(hours=v["id"])).strftime("%Y-%m-%dT%H:%M:%SZ")
+    items = rank(vids, Steering(rules=[rule("limit", "type:video", amount=2)]), noon)
     assert sum(not i.hidden for i in items) == 2
     assert [i.id for i in items if not i.hidden] == [1, 2]
 
@@ -94,3 +98,14 @@ def test_budget():
     assert [i.id for i in chosen] == [1, 4]
     assert sum(i.minutes for i in chosen) <= 10
     assert unknown == 1
+
+
+def test_search_matches_word_starts():
+    from app import search as s
+    words = set(s.words("RIP Juan Atkins — José's techno, current affairs"))
+    assert s.matches(s.terms("RIP J"), words)
+    assert s.matches(s.terms("atk"), words)
+    assert s.matches(s.terms("jose"), words)
+    assert s.matches(s.terms("JUAN rip"), words)
+    assert not s.matches(s.terms("rent"), words)   # not inside "current"
+    assert not s.matches(s.terms("RIP X"), words)

@@ -20,7 +20,7 @@
 
   <div id="results">
   <p class="muted bar">
-    {% if view.q %}{{ total }} archived item{{ '' if total == 1 else 's' }} match “{{ view.q }}”{% else %}{{ total }} archived item{{ '' if total == 1 else 's' }}, most recent first{% endif %}
+    {% if view.q %}{{ total }} archived item{{ ' matches' if total == 1 else 's match' }} “{{ view.q }}”{% else %}{{ total }} archived item{{ '' if total == 1 else 's' }}, most recent first{% endif %}
     · Miniflux keeps archived items for 60 days
   </p>
   <div id="cards">

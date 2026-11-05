@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block page %}digest-run{% endblock %}
+{% block title %}{{ title }} · Maniflux{% endblock %}
+{% block main %}
+<p><a href="/digests/{{ r.digest_id }}" class="back">← {{ r.name }}</a></p>
+<h1>{{ title }}</h1>
+<div class="meta"><span>{{ r.item_count }} items read</span></div>
+<div class="content digest-body">
+  {% if body %}{{ body | safe }}{% elif r.status == "empty" %}<p class="muted">Nothing new from these feeds in this period.</p>{% elif r.status == "error" %}<p class="error">{{ r.error }}</p>{% else %}<p class="muted">Still writing…</p>{% endif %}
+</div>
+{{ sources | safe }}
+{% endblock %}

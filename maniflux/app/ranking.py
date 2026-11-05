@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from . import kinds
-from .text import excerpt, parse_time, quick_text
+from . import search as searching
+from .text import clean_author, excerpt, parse_time, quick_text
 
 HALF_LIFE_DAYS = 3
 BOOST = 2.0
@@ -169,16 +170,17 @@ def _apply(rule: dict, score: float, what: str) -> tuple[float, str]:
 
 
 def search(items: list[Item], q: str) -> list[Item]:
-    """Items whose title, text, feed or author contain every word of the search."""
-    words = q.lower().split()
-    if not words:
+    """Items where every search word starts a word of the title, text, feed or author."""
+    t = searching.terms(q)
+    if not t:
         return items
 
-    def text(it: Item) -> str:
+    def text_words(it: Item) -> set[str]:
         e = it.entry
-        return f"{e.get('title', '')} {it.text} {(e.get('feed') or {}).get('title', '')} {e.get('author', '')}".lower()
+        return set(searching.words(f"{e.get('title', '')} {it.text} {(e.get('feed') or {}).get('title', '')} "
+                                   f"{clean_author(e.get('author', ''))}"))
 
-    return [it for it in items if all(w in text(it) for w in words)]
+    return [it for it in items if searching.matches(t, text_words(it))]
 
 
 def shown_by(items: list[Item], show: str, group: int | None) -> list[Item]:

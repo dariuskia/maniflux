@@ -63,6 +63,40 @@ CREATE TABLE IF NOT EXISTS saved (
     path TEXT NOT NULL,
     saved_at TEXT NOT NULL
 );
+-- Digests: written by a model from groups of feeds, on a schedule
+-- frequency: daily, weekly, biweekly, monthly; weekday 0 = Monday; at = "HH:MM" local time
+CREATE TABLE IF NOT EXISTS digest (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    instructions TEXT NOT NULL,
+    frequency TEXT NOT NULL CHECK (frequency IN ('daily', 'weekly', 'biweekly', 'monthly')),
+    weekday INTEGER NOT NULL DEFAULT 0,
+    monthday INTEGER NOT NULL DEFAULT 1,
+    at TEXT NOT NULL DEFAULT '08:00',
+    active INTEGER NOT NULL DEFAULT 1,
+    next_run_at TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS digest_group (
+    digest_id INTEGER NOT NULL,
+    group_id INTEGER NOT NULL,
+    PRIMARY KEY (digest_id, group_id)
+);
+-- status: running, done, empty (no new items), error
+CREATE TABLE IF NOT EXISTS digest_run (
+    id INTEGER PRIMARY KEY,
+    digest_id INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    item_count INTEGER NOT NULL DEFAULT 0,
+    items TEXT,  -- JSON: number, title, link, feed and date of each item read (not the text)
+    body TEXT,
+    error TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS digest_run_digest ON digest_run (digest_id, id);
 CREATE TABLE IF NOT EXISTS state (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -136,6 +170,7 @@ class DB:
             c.execute("BEGIN")
             c.execute("DELETE FROM feed_group_member WHERE group_id = ?", (group_id,))
             c.execute("DELETE FROM rules WHERE kind = 'limit' AND value = ?", (f"group:{group_id}",))
+            c.execute("DELETE FROM digest_group WHERE group_id = ?", (group_id,))
             c.execute("DELETE FROM feed_group WHERE id = ?", (group_id,))
             c.execute("COMMIT")
 
@@ -152,6 +187,62 @@ class DB:
 
     def steering(self):
         return Steering(self.feed_weights(), self.groups(), self.memberships(), self.rules())
+
+    # ---------- digests ----------
+
+    def digests(self) -> list[dict]:
+        rows = [dict(r) for r in self.q("SELECT * FROM digest ORDER BY name COLLATE NOCASE")]
+        groups = {}
+        for r in self.q("SELECT digest_id, group_id FROM digest_group"):
+            groups.setdefault(r["digest_id"], set()).add(r["group_id"])
+        for d in rows:
+            d["group_ids"] = groups.get(d["id"], set())
+        return rows
+
+    def digest(self, digest_id: int) -> dict | None:
+        return next((d for d in self.digests() if d["id"] == digest_id), None)
+
+    def save_digest(self, digest_id: int | None, fields: dict, group_ids: set[int]) -> int:
+        cols = ["name", "instructions", "frequency", "weekday", "monthday", "at", "active", "next_run_at"]
+        with self.lock:
+            c = self.conn
+            c.execute("BEGIN")
+            if digest_id is None:
+                cur = c.execute(
+                    f"INSERT INTO digest ({', '.join(cols)}, created_at) VALUES ({', '.join('?' * len(cols))}, ?)",
+                    [fields[k] for k in cols] + [now()])
+                digest_id = cur.lastrowid
+            else:
+                c.execute(f"UPDATE digest SET {', '.join(f'{k} = ?' for k in cols)} WHERE id = ?",
+                          [fields[k] for k in cols] + [digest_id])
+            c.execute("DELETE FROM digest_group WHERE digest_id = ?", (digest_id,))
+            c.executemany("INSERT INTO digest_group (digest_id, group_id) VALUES (?, ?)",
+                          [(digest_id, g) for g in group_ids])
+            c.execute("COMMIT")
+        return digest_id
+
+    def delete_digest(self, digest_id: int):
+        with self.lock:
+            c = self.conn
+            c.execute("BEGIN")
+            for t in ("digest_group", "digest_run"):
+                c.execute(f"DELETE FROM {t} WHERE digest_id = ?", (digest_id,))
+            c.execute("DELETE FROM digest WHERE id = ?", (digest_id,))
+            c.execute("COMMIT")
+
+    def runs(self, digest_id: int | None = None, limit: int = 20) -> list[dict]:
+        if digest_id is None:
+            rows = self.q("SELECT r.*, d.name FROM digest_run r JOIN digest d ON d.id = r.digest_id "
+                          "ORDER BY r.id DESC LIMIT ?", (limit,))
+        else:
+            rows = self.q("SELECT r.*, d.name FROM digest_run r JOIN digest d ON d.id = r.digest_id "
+                          "WHERE r.digest_id = ? ORDER BY r.id DESC LIMIT ?", (digest_id, limit))
+        return [dict(r) for r in rows]
+
+    def run(self, run_id: int) -> dict | None:
+        rows = self.q("SELECT r.*, d.name FROM digest_run r JOIN digest d ON d.id = r.digest_id WHERE r.id = ?",
+                      (run_id,))
+        return dict(rows[0]) if rows else None
 
     # ---------- rules ----------
 
