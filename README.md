@@ -44,7 +44,7 @@ docker compose up -d miniflux db
 3. Set `VAULT_CONTENT_PATH` to your vault's `content/` folder and `OPENROUTER_API_KEY` to an [OpenRouter](https://openrouter.ai) key (used for each saved note's description).
 4. Start everything: `docker compose up -d`, then open http://127.0.0.1:8090.
 
-Everything binds to `127.0.0.1`, so it's only reachable from your own machine. To use it on your phone, put it behind something like Tailscale rather than opening ports.
+Everything binds to `127.0.0.1`, so it's only reachable from your own machine. To run Miniflux and Maniflux on a server and use them from your phone over Tailscale, see [server/README.md](server/README.md).
 
 ### Try it without any setup
 

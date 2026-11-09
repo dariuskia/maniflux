@@ -1,9 +1,15 @@
-# Miniflux on your Mac. Passwords come from the .env file next to this one.
-# Open http://localhost:8080 once it's running.
+# Miniflux, Maniflux and ig2rss. Passwords and settings come from the .env file next to this one.
+# COMPOSE_PROFILES in .env picks what runs here:
+#   reader  = Miniflux + Postgres + Maniflux (the personal server)
+#   ig2rss  = ig2rss (the Mac)
+# See server/README.md.
+
+name: feed
 
 services:
   miniflux:
     image: miniflux/miniflux:latest
+    profiles: [reader]
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
@@ -14,6 +20,8 @@ services:
       DATABASE_URL: postgres://miniflux:${POSTGRES_PASSWORD}@db/miniflux?sslmode=disable
       RUN_MIGRATIONS: "1"
       CREATE_ADMIN: "1"
+      # The address you open Miniflux at
+      BASE_URL: ${MINIFLUX_BASE_URL:-http://127.0.0.1:8080/}
       ADMIN_USERNAME: ${MINIFLUX_ADMIN_USER}
       ADMIN_PASSWORD: ${MINIFLUX_ADMIN_PASSWORD}
       # For later: lets Miniflux fetch feeds from services on this Mac (e.g. RSSHub)
@@ -26,6 +34,7 @@ services:
   # Maniflux: ranks unread entries and saves to Obsidian. Open http://127.0.0.1:8090
   maniflux:
     build: ./maniflux
+    profiles: [reader]
     restart: unless-stopped
     ports:
       - "127.0.0.1:8090:8090"
@@ -39,14 +48,17 @@ services:
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-haiku-5.5}
       DIGEST_MODEL: ${DIGEST_MODEL:-anthropic/claude-sonnet-5.5}
       TZ: ${TZ:-America/Los_Angeles}
+      # The address you open Maniflux at (used in the digest feed's links)
+      PUBLIC_URL: ${MANIFLUX_PUBLIC_URL:-http://127.0.0.1:8090}
     volumes:
       - ${VAULT_CONTENT_PATH}:/vault/content
       - maniflux-data:/data
 
   # ig2rss: one RSS feed per Instagram account, for Miniflux. Status page: http://127.0.0.1:8091
-  # Miniflux subscribes to http://ig2rss:8091/feeds/<username>.xml. See ig2rss/README.md.
+  # Runs on the Mac; Miniflux on the server reaches it over Tailscale. See ig2rss/README.md.
   ig2rss:
     build: ./ig2rss
+    profiles: [ig2rss]
     restart: unless-stopped
     ports:
       - "127.0.0.1:8091:8091"
@@ -64,6 +76,7 @@ services:
 
   db:
     image: postgres:17-alpine
+    profiles: [reader]
     restart: unless-stopped
     environment:
       POSTGRES_USER: miniflux
