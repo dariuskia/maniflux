@@ -104,8 +104,8 @@ def rule_kind(url: str) -> str | None:
 def gather(url: str) -> dict:
     """What the page says about itself: title, site, description, authors, published date and text."""
     from bs4 import BeautifulSoup
-    meta = {"title": "", "site": host(url), "description": "", "published": "", "authors": [], "text": "",
-            "words": 0, "generator": ""}
+    meta = {"title": "", "page_title": "", "site": host(url), "description": "", "published": "", "authors": [],
+            "text": "", "words": 0, "generator": ""}
     try:
         r = httpx.get(url, headers=BROWSER, timeout=30, follow_redirects=True)
     except httpx.HTTPError:
@@ -148,6 +148,8 @@ def gather(url: str) -> dict:
         or m(name="date") or ld_published,
         "authors": list(dict.fromkeys(meta_authors + ld_authors)),
         "generator": m(name="generator"),
+        # The page's own title, as the browser tab shows it: the note's title
+        "page_title": re.sub(r"\s+", " ", doc.title.get_text()).strip() if doc.title else "",
     })
     for t in doc(["script", "style", "noscript", "nav", "header", "footer", "aside", "form", "svg", "iframe"]):
         t.decompose()
@@ -171,11 +173,10 @@ def ask_model(url: str, meta: dict, forced: str | None) -> dict:
 
 
 def ask_model_once(url: str, meta: dict, forced: str | None) -> dict:
-    """The model's view of what the link is: title, kind, authors, is_music, form, description,
-    published, minutes. The same instructions Link Ingest used."""
+    """The model's view of what the link is: kind, authors, is_music, form, description, published,
+    minutes. (Not the title: that's the page's own.)"""
     prompt = "\n".join([
         "You are filing a link in a personal reading log. Using the page data below, reply with only a JSON object with these keys:",
-        '- "title": the page\'s own metadata title, with only the site name taken off (e.g. "Ananda Kalukin – tjTODAY" becomes "Ananda Kalukin"). Write your own only if the metadata title is missing or is just the site name',
         f'- "type": one of {", ".join(KINDS)} (essays and blog posts count as article)'
         + (f" (it is a {forced})" if forced else ""),
         '- "authors": array of the people who made it or are its subject. For music: the artists or DJs performing, '
@@ -265,7 +266,13 @@ def work_out(job: dict) -> dict:
     form = ai_form if ai_form in FORMS.get(lib_type, []) else rule_form
 
     creators = clean_names(ai.get("authors")) or meta["authors"] or ([meta["channel"]] if meta["channel"] else [])
-    title = re.sub(r"\s+", " ", str(ai.get("title") or meta["title"] or host(url))).strip()
+    # The title the save brought (Maniflux's item, YouTube's, the Web Clipper's), else the page's own as
+    # the browser tab shows it, else its preview title, else the address. A site-name placeholder from
+    # an offline save doesn't count.
+    given = (job.get("title") or "").strip()
+    if given in (host(url), "Untitled"):
+        given = ""
+    title = re.sub(r"\s+", " ", given or meta.get("page_title") or meta["title"] or url).strip()
     minutes = job.get("minutes") or None
     if not minutes and lib_type == "writing" and meta["words"] > 150:
         minutes = max(1, round(meta["words"] / WORDS_PER_MINUTE))
