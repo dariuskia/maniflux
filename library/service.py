@@ -117,6 +117,10 @@ def finish_pending(path: Path) -> None:
                "description": fm.get("description", ""), "channel": fm.get("yt-channel", ""),
                "category": fm.get("yt-category", "")}
         note = fill.work_out(job)
+        # A description written where the page could be read in full (the Web Clipper, in your logged-in
+        # browser) beats one from the server, which only sees a paywall on sites like the NYT: keep it
+        if str(fm.get("description") or "").strip():
+            note["description"] = fm["description"].strip()
         dup, why = index.duplicate(note)
     if dup:
         new = L.set_props(before, {"status": "duplicate", "duplicate-of": f"[[{dup.stem}]]"})
