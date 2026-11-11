@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
 # Copies this folder's code to the personal server and rebuilds what changed. Run on the Mac:
-#   server/deploy.sh [root@home]
+#   server/deploy.sh [--force] [root@home]
 # Never copies .env, the setup notes, or any data; the server keeps its own .env.
+# Stops if there are uncommitted changes, so the server only runs code that's in Git.
+# --force deploys anyway (for trying something out on the server before committing).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+FORCE=0
+if [[ "${1:-}" == "--force" ]]; then FORCE=1; shift; fi
 SERVER="${1:-root@home}"
+
+if (( ! FORCE )) && [[ -n "$(git status --porcelain)" ]]; then
+  echo "Not deploying: these changes aren't committed:" >&2
+  git status --short >&2
+  echo "Commit them first, or run server/deploy.sh --force to deploy anyway." >&2
+  exit 1
+fi
 
 rsync -az --delete \
   --exclude .git --exclude .env --exclude docs/SETUP-NOTES.md \

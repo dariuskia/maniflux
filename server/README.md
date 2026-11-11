@@ -47,7 +47,7 @@ Hetzner server ("home" in Tailscale)                         Mac
 
 ## Day to day
 
-- **Code changes:** `server/deploy.sh`. It copies code, never `.env` or data.
+- **Code changes:** commit, then `server/deploy.sh`. It copies code, never `.env` or data, and stops if anything is uncommitted (`--force` deploys anyway). Pushing to GitHub doesn't change the server.
 - **Settings on the server:** `ssh root@home`, edit `/root/feed/.env`, then `cd /root/feed && docker compose up -d`.
 - **Vault sync:** `ssh root@home journalctl -u obsidian-sync -f`, or `ob sync-status --path /srv/vault`.
 - **Kill the Newsletter:** unchanged; see `kill-the-newsletter/README.md`. Its upgrade script keeps `configuration.mjs`, including the Tailscale addresses. If you reinstall it, run `bash serve-home.sh` on the server again.
