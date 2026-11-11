@@ -60,6 +60,8 @@ The Web Clipper, Link Ingest and Maniflux only know what the page said. The **li
 
 A note is picked up while it has **no database ID or no cover**. Covers come from the databases first (Open Library for books, the Cover Art Archive for music; Wikidata has no film posters), and only then from the note's link: the poster on Letterboxd, the cover on Goodreads, the art on Bandcamp and Spotify, or a YouTube thumbnail (taken from the video's ID, since YouTube won't serve its page to scripts). It changes nothing else: not the file name, the body, the type, or `date-archived`. Each step is tried once per note: a note the databases don't know, or with no image anywhere, isn't asked about again. A try that *fails* (a database down, the LLM unreachable) is retried after 10 minutes, an hour, 6 hours and a day; after that the service gives up on the note and says so in its log. Its log: `ssh root@home 'cd /root/feed && docker compose logs -f library'`. To try it on the Mac: `uv run library/enrich.py` (a dry run; `--apply` to fill in).
 
+**Duplicates:** each round the service also compares IDs across all notes. When two share one (the same book saved from Amazon and from Goodreads, say), the newer gets `duplicate-of: "[[the older note]]"`, and `Duplicates.base` in the vault lists them. Merge or delete them by hand: merging on the server would mean editing the journal there, which risks sync conflicts. Each note is flagged once, so if two aren't really the same (two editions, say), remove the property and it stays off.
+
 Link Ingest and Maniflux recognise film and book links (Letterboxd and IMDb films, Goodreads and Open Library books) and save them as `film` and `book`. For the Web Clipper, its type prompt decides.
 
 ## Views

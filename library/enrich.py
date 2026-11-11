@@ -14,7 +14,8 @@ A note is picked up when its type is book, film, show or music and it has no dat
 cover. First the databases are asked for its facts (if it has no ID yet), then for a cover (by its
 IDs), and only then does the cover come from the note's link (the page's own image, or a YouTube
 thumbnail). Each step is tried once per note (remembered by its link in a small state file), so a
-note the databases don't know isn't asked about again. A try that fails (a database down, the LLM
+note the databases don't know isn't asked about again. Each round it also compares IDs across all
+notes, and marks the newer of two notes with the same ID with duplicate-of (once per note). A try that fails (a database down, the LLM
 unreachable) is retried after 10 minutes, an hour, 6 hours and a day, then given up, with a line in
 the log. Only the note's own properties change: never its file name, body,
 or anything else in the vault. Facts (year, IDs) only come from the databases; the LLM only tidies
@@ -188,7 +189,45 @@ def run(apply: bool) -> int:
                           if k not in ("failures", "next_try")}  # a success clears past failures
             save_state(state)
         time.sleep(1)  # MusicBrainz asks for at most one request a second
-    return len(todo)
+    return len(todo) + flag_duplicates(state, apply)
+
+
+# IDs that name one particular work; two notes sharing one are the same thing saved twice
+DUPLICATE_IDS = ["openlibrary", "isbn", "imdb", "tmdb", "musicbrainz", "wikidata", "spotify"]
+
+
+def flag_duplicates(state: dict, apply: bool) -> int:
+    """Marks the newer of two notes with the same database ID: duplicate-of: "[[older note]]".
+    Each note is flagged once; remove the property if they aren't really the same and it stays off."""
+    notes = []
+    for p in sorted((L.VAULT / L.NOTES_DIR).glob("*.md")):
+        try:
+            notes.append((p, L.frontmatter(p.read_text())))
+        except Exception:
+            continue
+    first: dict[tuple[str, str], tuple[Path, dict]] = {}
+    flagged = 0
+    for p, fm in sorted(notes, key=lambda n: (n[1].get("date-added") or "", n[0].name)):
+        for k in DUPLICATE_IDS:
+            v = (fm.get(k) or "").strip()
+            if not v:
+                continue
+            older = first.setdefault((k, v), (p, fm))
+            if older[0] == p:
+                continue
+            key = fm.get("url") or p.name
+            done = tried(state, key)
+            if fm.get("duplicate-of") or "duplicate" in done:
+                break
+            log(f"{'flagged' if apply else 'would flag'} {p.name} as a duplicate of {older[0].name} (same {k} {v})")
+            flagged += 1
+            if apply:
+                current = p.read_text()
+                p.write_text(L.set_props(current, {"duplicate-of": f"[[{older[0].stem}]]"}))
+                state[key] = {**done, "duplicate": older[0].stem}
+                save_state(state)
+            break
+    return flagged
 
 
 def main() -> None:
