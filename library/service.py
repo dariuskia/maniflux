@@ -115,7 +115,10 @@ def finish_pending(path: Path) -> None:
         job = {"url": fm["url"], "title": fm.get("title", ""), "minutes": int(fm["minutes"]) if
                str(fm.get("minutes", "")).isdigit() else None, "published": fm.get("published", ""),
                "description": fm.get("description", ""), "channel": fm.get("yt-channel", ""),
-               "category": fm.get("yt-category", "")}
+               "category": fm.get("yt-category", ""),
+               # Authors the clip already read off the page (the Web Clipper's {{author}})
+               "creators": [L.link_target(c) for c in (lambda v: v if isinstance(v, list) else [v])(
+                   fm.get("creators") or fm.get("author") or []) if c and str(c).strip()]}
         note = fill.work_out(job)
         # A description written where the page could be read in full (the Web Clipper, in your logged-in
         # browser) beats one from the server, which only sees a paywall on sites like the NYT: keep it
