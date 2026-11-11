@@ -2,6 +2,7 @@
 # Makes Maniflux and Miniflux reachable over Tailscale, through Kill the Newsletter's own web server:
 #   https://home.<tailnet>.ts.net        -> Maniflux
 #   https://home.<tailnet>.ts.net:8443   -> Miniflux
+#   https://home.<tailnet>.ts.net:8444   -> the library service (saves from Link Ingest)
 # Anyone not connecting through Tailscale is refused. Run on the server as root:
 #   bash serve-home.sh
 # It adds an extraCaddyfile to Kill the Newsletter's configuration.mjs, restarts it, and puts
@@ -30,6 +31,12 @@ $TAILNET_HOST:8443 {
 	@outside not remote_ip $RANGES
 	abort @outside
 	reverse_proxy 127.0.0.1:8080
+}
+
+$TAILNET_HOST:8444 {
+	@outside not remote_ip $RANGES
+	abort @outside
+	reverse_proxy 127.0.0.1:8095
 }
 EOF
 )"

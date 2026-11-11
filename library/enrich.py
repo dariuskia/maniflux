@@ -89,8 +89,8 @@ def candidates(state: dict) -> list[Path]:
             fm = L.frontmatter(p.read_text())
         except Exception:  # a note being written right now, or broken frontmatter: skip it this round
             continue
-        if fm.get("type", "").strip() not in TYPES | COVER_ONLY:
-            continue
+        if fm.get("type", "").strip() not in TYPES | COVER_ONLY or fm.get("status") in ("pending", "duplicate"):
+            continue  # pending and duplicate notes belong to the service's worker
         done = tried(state, fm.get("url") or p.name)
         if done.get("next_try", "") > datetime.now().isoformat(timespec="seconds"):
             continue  # failed recently: waiting before trying again
@@ -211,6 +211,8 @@ def flag_duplicates(state: dict, apply: bool) -> int:
     first: dict[tuple[str, str], tuple[Path, dict]] = {}
     flagged = 0
     for p, fm in sorted(notes, key=lambda n: (n[1].get("date-added") or "", n[0].name)):
+        if fm.get("status") in ("pending", "duplicate"):
+            continue
         for k in DUPLICATE_IDS:
             v = (fm.get(k) or "").strip()
             if not v:

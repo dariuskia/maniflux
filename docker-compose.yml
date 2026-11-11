@@ -50,17 +50,22 @@ services:
       TZ: ${TZ:-America/Los_Angeles}
       # The address you open Maniflux at (used in the digest feed's links)
       PUBLIC_URL: ${MANIFLUX_PUBLIC_URL:-http://127.0.0.1:8090}
+      LIBRARY_TOKEN: ${LIBRARY_TOKEN:-}
     volumes:
       - ${VAULT_CONTENT_PATH}:/vault/content
       - maniflux-data:/data
 
-  # library: fills in new books, films, shows and music in the vault's content/ folder (year, cover,
-  # database IDs). See library/README.md.
+  # library: turns every saved link into a finished note in the vault's content/ folder (type,
+  # creators, description, cover, IDs, duplicates). Link Ingest and Maniflux send links to it;
+  # Web Clipper notes arrive as status: pending. See library/README.md.
   library:
     build: ./library
     profiles: [reader]
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:8095:8095"
     environment:
+      LIBRARY_TOKEN: ${LIBRARY_TOKEN:-}
       VAULT_PATH: /vault
       LIBRARY_STATE: /data/state.json
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}

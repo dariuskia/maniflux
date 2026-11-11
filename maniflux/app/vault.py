@@ -156,7 +156,7 @@ def note_props(entry: dict, tz) -> dict:
 
 
 def render_note(entry: dict, thought: str, now: datetime, people_folder: str, tz,
-                note_type: str, description: str, authors: list[str] | None = None) -> str:
+                note_type: str, description: str, authors: list[str] | None = None, status: str = "") -> str:
     """authors: from the model, used when the feed doesn't name a real author."""
     props = note_props(entry, tz)
     lib_type, form = kinds.note_type(note_type)
@@ -182,6 +182,7 @@ def render_note(entry: dict, thought: str, now: datetime, people_folder: str, tz
         "  - clippings",
         f"  - {lib_type}",
         "date-archived:",
+        *([f"status: {status}"] if status else []),
         "---",
         "",
         "## Notes",

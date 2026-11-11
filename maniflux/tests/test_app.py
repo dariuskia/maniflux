@@ -48,81 +48,49 @@ def test_opening_the_original_marks_read(client, fake):
     assert fake.entries[2]["status"] == "read"
 
 
-def test_short_item_uses_its_own_text_as_description(client, fake, ai):
-    from app.vault import read_frontmatter
-    # a short item with an unclear type: the model is only asked for the type, and no page is fetched
-    fake.entries[1]["url"] = "https://www.nytimes.com/2026/10/30/x.html"
-    fake.entries[1]["content"] = "<p>A caption,</p><p>on two lines.</p>"
-    client.post("/e/1/save", headers=HX)
-    note = next(client.content_dir.glob("*.md"))
-    fm = read_frontmatter(note.read_text())
-    assert fm["description"] == "A caption, on two lines."
-    assert fm["type"] == "writing" and fm["tags"] == ["clippings", "writing"]  # "Essay" counts as writing
-    assert fm["minutes"] == 5
-    assert "%%" not in note.read_text() and "{{" not in note.read_text()
-    assert '"type":' in ai.prompts[0] and '"description":' not in ai.prompts[0]
-    assert not any(c[1].endswith("/fetch-content") for c in fake.calls)
-
-
-def test_long_item_gets_a_written_description(client, fake, ai):
-    from app.vault import read_frontmatter
-    fake.entries[1]["content"] = "<p>" + "word " * 200 + "</p>"
-    client.post("/e/1/save", headers=HX)
-    fm = read_frontmatter(next(client.content_dir.glob("*.md")).read_text())
-    assert fm["description"] == "A short summary."
-    assert '"description":' in ai.prompts[0] and "title: Fresh post" in ai.prompts[0]
-    assert not any(c[1].endswith("/fetch-content") for c in fake.calls)
-
-
-def test_short_item_with_known_type_and_author_needs_no_model(client, fake, ai):
-    from app.vault import read_frontmatter
-    fake.entries[1]["url"] = "https://www.youtube.com/watch?v=abc"
-    client.post("/e/1/save", headers=HX)
-    fm = read_frontmatter(next(client.content_dir.glob("*.md")).read_text())
-    assert fm["type"] == "video" and fm["description"] == "Some text."
-    assert ai.prompts == []
-    assert not any(c[1].endswith("/fetch-content") for c in fake.calls)
-
-
-def test_short_item_without_author_asks_only_for_authors(client, fake, ai):
-    fake.entries[1]["url"] = "https://www.youtube.com/watch?v=abc"
-    fake.entries[1]["author"] = ""
-    client.post("/e/1/save", headers=HX)
-    assert '"authors":' in ai.prompts[0]
-    assert '"description":' not in ai.prompts[0] and '"type":' not in ai.prompts[0]
-
-
-def test_summary_failure_saves_nothing_and_keeps_card(client, fake, ai):
-    ai.fail = True
-    r = client.post("/e/1/save", headers=HX)
-    assert 'class="card"' in r.text and "Not saved" in r.text and "Rate limited" in r.text
-    assert not list(client.content_dir.glob("*.md"))
-    assert fake.entries[1]["status"] == "unread"
-    ai.fail = False
-    r = client.post("/e/1/save", headers=HX)
-    assert "Saved to Obsidian" in r.text
-
-
-def test_save_writes_once_and_marks_read(client, fake):
+def test_save_hands_the_item_to_the_library_service(client, fake, ai, library):
     r = client.post("/e/3/save", data={"thought": "worth a look"}, headers=HX)
     assert "Saved to Obsidian" in r.text
-    notes = list(client.content_dir.glob("*.md"))
-    assert [n.name for n in notes] == ["Housing is too expensive.md"]
-    assert "worth a look" in notes[0].read_text()
+    assert fake.entries[3]["status"] == "read"
+    # the note itself is written by the library service, in the background
+    assert not list(client.content_dir.glob("*.md"))
+    job = library.jobs[0]
+    assert job["url"] == fake.entries[3]["url"] and job["thought"] == "worth a look" and job["via"] == "reader"
+    assert job["title"] == "Housing is too expensive" and job["source"] == "Example Feed"
+    assert "About housing costs." in job["text"] and job["date_added"]
+    assert ai.prompts == []  # no waiting on the model while saving
+
+
+def test_save_when_the_library_service_is_down_leaves_a_pending_note(client, fake, library):
+    from app.vault import read_frontmatter
+    library.down = True
+    r = client.post("/e/3/save", data={"thought": "worth a look"}, headers=HX)
+    assert "Saved to Obsidian: Housing is too expensive.md" in r.text and "library service is back" in r.text
+    note = next(client.content_dir.glob("*.md"))
+    fm = read_frontmatter(note.read_text())
+    assert fm["status"] == "pending" and fm["url"] == fake.entries[3]["url"] and "worth a look" in note.read_text()
     assert fake.entries[3]["status"] == "read"
 
-    fake.entries[3]["status"] = "unread"
+
+def test_save_of_something_already_saved(client, fake, library):
+    library.exists[fake.entries[3]["url"]] = "Housing"
     r = client.post("/e/3/save", headers=HX)
-    assert "Already in Obsidian" in r.text
-    assert len(list(client.content_dir.glob("*.md"))) == 1
-    assert fake.entries[3]["status"] == "read"
+    assert "Already in Obsidian: Housing.md" in r.text and fake.entries[3]["status"] == "read"
+    assert not library.jobs
 
 
-def test_save_skips_url_clipped_elsewhere(client, fake):
+def test_save_skips_url_clipped_elsewhere(client, fake, library):
     (client.content_dir / "clipped.md").write_text(f'---\nurl: "{fake.entries[1]["url"]}"\n---\n')
     r = client.post("/e/1/save", headers=HX)
     assert "Already in Obsidian: clipped.md" in r.text
-    assert len(list(client.content_dir.glob("*.md"))) == 1
+    assert not library.jobs
+
+
+def test_newsletter_save_leaves_out_the_forwarding_address(client, fake, library):
+    fake.entries[1]["author"] = "me+caf_=abc=news.example.com@gmail.com"
+    client.post("/e/1/save", headers=HX)
+    assert library.jobs[0]["creators"] == []
+    assert "caf_" not in client.get("/e/1").text
 
 
 def test_save_without_htmx_redirects(client):
@@ -314,15 +282,3 @@ def test_archive_search_index_keeps_up(client, fake):
     assert "Old post" not in client.get("/archive?q=old").text
 
 
-def test_newsletter_save_asks_model_for_author(client, fake, ai):
-    from app.vault import read_frontmatter
-    fake.entries[1]["author"] = "me+caf_=abc=news.example.com@gmail.com"
-    client.post("/e/1/save", headers=HX)
-    fm = read_frontmatter(next(client.content_dir.glob("*.md")).read_text())
-    assert fm["creators"] == ["[[people/Resident Advisor|Resident Advisor]]"]
-    assert '"authors":' in ai.prompts[-1] and "caf_" not in ai.prompts[-1]
-    # a real author: not asked
-    client.post("/e/3/save", headers=HX)
-    assert '"authors":' not in ai.prompts[-1]
-    # the reading view doesn't show the address either
-    assert "caf_" not in client.get("/e/1").text

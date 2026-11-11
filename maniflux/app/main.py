@@ -18,12 +18,13 @@ from fastapi.templating import Jinja2Templates
 
 from . import config, digests, kinds
 from .ai import AIError, Summarizer
+from .library import Library, LibraryError
 from .db import DB
 from .miniflux import Miniflux, MinifluxError
 from .ranking import SHOW, Item, budget_set, rank, rule_is_live, search, shown_by
 from .search import ArchiveIndex
 from .text import clean_author, full_text, parse_time
-from .vault import VaultIndex, note_props, render_note, write_note
+from .vault import VaultIndex, published_day, render_note, split_authors, write_note
 
 log = logging.getLogger("maniflux")
 HERE = Path(__file__).parent
@@ -160,6 +161,8 @@ async def lifespan(app: FastAPI):
         app.state.vault = VaultIndex(config.CONTENT_DIR)
     if not hasattr(app.state, "ai"):
         app.state.ai = Summarizer(config.OPENROUTER_API_KEY, config.OPENROUTER_MODEL)
+    if not hasattr(app.state, "library"):
+        app.state.library = Library(config.LIBRARY_URL, config.LIBRARY_TOKEN)
     app.state.save_lock = asyncio.Lock()
     app.state.archive_index = ArchiveIndex()
     app.state.digests_running = set()
@@ -171,6 +174,7 @@ async def lifespan(app: FastAPI):
         t.cancel()
     await app.state.mf.close()
     await app.state.ai.close()
+    await app.state.library.close()
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -306,41 +310,39 @@ async def save(request: Request, entry_id: int, thought: str = Form(""), back: s
     except MinifluxError as e:
         return _save_reply(request, {"id": entry_id, "title": ""}, str(e), error=True, back=back)
 
-    existing = await run_in_threadpool(vault.find, entry["url"])
-    if not existing:
-        known = kinds.known_type(entry)
-        text = full_text(entry.get("content", ""))
-        need_authors = not clean_author(entry.get("author", ""))
-        # Short items (a caption, a short post, a feed's summary): their own text is the description, as is
-        short = len(text.split()) < config.SHORT_TEXT_WORDS
-        filled = {"description": " ".join(text.split())} if short else {}
-        try:
-            if not short or known is None or need_authors:
-                filled |= await request.app.state.ai.fill(note_props(entry, config.TZ), text, need_type=known is None,
-                                                          need_authors=need_authors, need_description=not short)
-        except AIError as e:
-            # Nothing saved: the card stays so the save can be tried again
-            msg = f"Not saved: couldn't fill in the note ({e})"
-            if not is_htmx(request):
-                return _back(msg, back)
-            item = rank([entry], db.steering(), now())[0]
-            return card(request, item, error=msg)
-
     async with request.app.state.save_lock:
-        existing = existing or await run_in_threadpool(vault.find, entry["url"])
+        existing = await run_in_threadpool(vault.find, entry["url"])
         if existing:
             text = f"Already in Obsidian: {existing.name}"
         else:
-            body = render_note(entry, thought, now(), config.PEOPLE_FOLDER, config.TZ,
-                               note_type=known or filled["type"], description=filled["description"],
-                               authors=filled.get("authors"))
+            # The library service works out the note (type, description, cover...) in the background,
+            # so saving doesn't wait for it. If it can't be reached, a pending note waits for it instead.
+            text_body = full_text(entry.get("content", ""))
+            job = {"url": entry["url"], "source": (entry.get("feed") or {}).get("title") or "", "via": "reader",
+                   "thought": thought, "title": entry.get("title") or "",
+                   "creators": split_authors(entry.get("author", "")),
+                   "published": published_day(entry, config.TZ), "minutes": entry.get("reading_time") or None,
+                   "text": text_body[:20000], "date_added": now().isoformat(timespec="seconds")}
+            path = ""
             try:
-                path = await run_in_threadpool(write_note, config.CONTENT_DIR, entry, body)
-            except OSError as e:
-                return _save_reply(request, entry, f"Couldn't write the note: {e.strerror or e}", error=True, back=back)
-            db.add_saved(entry_id, entry["url"], str(path.relative_to(config.CONTENT_DIR)))
+                answer = await request.app.state.library.save(job)
+                if answer.get("status") == "exists":
+                    text = f"Already in Obsidian: {answer.get('note')}.md"
+                else:
+                    text = "Saved to Obsidian"
+            except LibraryError:
+                short = len(text_body.split()) < config.SHORT_TEXT_WORDS
+                body = render_note(entry, thought, now(), config.PEOPLE_FOLDER, config.TZ,
+                                   note_type=kinds.known_type(entry) or "article",
+                                   description=" ".join(text_body.split()) if short else "", status="pending")
+                try:
+                    written = await run_in_threadpool(write_note, config.CONTENT_DIR, entry, body)
+                except OSError as e:
+                    return _save_reply(request, entry, f"Couldn't write the note: {e.strerror or e}", error=True, back=back)
+                path = str(written.relative_to(config.CONTENT_DIR))
+                text = f"Saved to Obsidian: {written.name} (filled in once the library service is back)"
+            db.add_saved(entry_id, entry["url"], path)
             db.feedback(entry, "save")
-            text = f"Saved to Obsidian: {path.name}"
 
         try:
             await request.app.state.mf.set_status([entry_id], "read")
