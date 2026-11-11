@@ -39,8 +39,12 @@ PLATFORMS = {"youtube", "substack", "spotify", "soundcloud", "bandcamp", "apple 
 PROMPT = """For each saved item in a personal library, answer two things.
 - "via": the organisation or outlet that put it out: the publication, the company (for its own blog), the
   newsletter, podcast, YouTube channel, radio station, record label or publishing house. Never the platform it is
-  hosted on (YouTube, Substack, Spotify, SoundCloud, Bandcamp, Apple Podcasts, arXiv, Medium, X, Instagram). For an
-  academic paper, the journal or conference if clear, else "". "" if unclear.
+  hosted on (YouTube, Substack, Spotify, SoundCloud, Bandcamp, Apple Podcasts, arXiv, Medium, X, Instagram): on
+  those, it's the newsletter, channel, show or label behind it. If the creator put it out themselves under their own
+  name (a personal blog or newsletter, their own channel, a self-released album), leave it empty, since it would only
+  repeat the creator; an outlet whose name is different from the creator's own name still counts (a blog,
+  newsletter or show with its own name). For an academic paper, the journal or
+  conference if clear, else "". "" if unclear.
 - "orgs": which of the item's listed creators are organisations rather than people (exact names from its list).
 "source" is how the item reached its owner; when it's a feed or newsletter name, that is often the outlet.
 Reply with JSON only: {"items": [{"i": <i>, "via": "...", "orgs": [...]}, ...]}, one per item."""

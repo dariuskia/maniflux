@@ -206,7 +206,11 @@ def ask_model_once(url: str, meta: dict, forced: str | None) -> dict:
         'to a company, an article by several organisations with no author); otherwise []',
         '- "via": the organisation or outlet that put it out: the publication, the company (for its own blog), the '
         "newsletter, podcast, YouTube channel, radio station, record label or publishing house. Never the platform it "
-        "is hosted on (YouTube, Substack, Spotify, SoundCloud, Bandcamp, Apple Podcasts, arXiv, Medium, X, Instagram). "
+        "is hosted on (YouTube, Substack, Spotify, SoundCloud, Bandcamp, Apple Podcasts, arXiv, Medium, X, Instagram): "
+        "on those, it's the newsletter, channel, show or label behind it. If the creator put it out themselves under "
+        "their own name (a personal blog or newsletter, their own channel, a self-released album), leave it empty, "
+        "since it would only repeat the creator. An outlet whose name is different from the creator's own name "
+        "still counts (a blog, newsletter or show with its own name). "
         '"" if unclear',
         '- "is_music": true if this is music to listen to: a DJ set, mix, radio show, live performance, session, music '
         "video, album or track. A video where the artist plays or performs music counts, even with talking in between. "
