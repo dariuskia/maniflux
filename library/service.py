@@ -12,7 +12,9 @@
 - Every 30 minutes it also runs the older sweep (enrich.py): covers and IDs for notes that lack
   them, and duplicate flags.
 
-The server never renames or deletes a note; only Obsidian does (through Process New Clips).
+The server never renames or deletes a note that anything links to; only Obsidian does (through
+Process New Clips). The one exception is safe: a pending note saved offline, named after the site,
+gets its real title, since nothing links to a note until it's ready.
 Run by Docker on the personal server; reachable only over Tailscale, with a token.
 """
 
@@ -126,7 +128,17 @@ def finish_pending(path: Path) -> None:
                           in_place_of={"creators": "author"})
         log(f"filled in {path.name}: {note['type']}{'/' + note['form'] if note.get('form') else ''}")
     L.frontmatter(new)  # must still parse
-    if path.exists() and path.read_text() == before:  # unchanged while we worked on it
+    if not path.exists() or path.read_text() != before:  # changed while we worked on it: next time
+        return
+    # A pending note saved offline is named after the site (the page couldn't be read then). Nothing
+    # links to a pending note yet, so it can take its real title; other names are left alone.
+    if not dup and path.stem in (fill.host(fm["url"]), "Untitled"):
+        target = fill.free_name(FOLDER, note["title"])
+        with open(target, "x", encoding="utf-8") as f:
+            f.write(new)
+        path.unlink()
+        log(f"named {path.name} → {target.name}")
+    else:
         path.write_text(new)
 
 

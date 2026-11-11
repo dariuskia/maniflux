@@ -1,4 +1,4 @@
-QuickAdd user script: watches `content/` for new notes (from the Web Clipper, Link Ingest, Maniflux or anything else) and adds a link to each one at the top of that day's entry in the journal, below the day's tasks. When it starts it also catches up, linking notes from the last few days that the journal doesn't link yet. Notes arrive already filled in (the Web Clipper, Link Ingest and Maniflux each write their own type and description), so this only links. Replaces Save clippings. Set the macro to "Run on plugin load". QuickAdd's settings sync to the phone too, so the script itself does nothing on phones and tablets: there it could run before Sync has brought the latest notes down and link them under stale dates. Notes dated in the future aren't linked; a notice asks you to fix their date-added. When today has no heading yet, it adds one from the date template, the same as the journal's "add date" button, so today starts with its checkboxes.
+QuickAdd user script: watches `content/` for new notes (from the Web Clipper, Link Ingest, Maniflux or anything else) and adds a link to each one at the top of that day's entry in the journal, below the day's tasks. When it starts it also catches up, linking notes from the last few days that the journal doesn't link yet. Notes are filled in by the library service on the personal server (see library/README.md in the feed repo). A note it's still working on says status: pending and isn't linked yet; when it says status: ready, this links it and removes the status. A save of something already in the library either sets relink on the existing note (linked again under that day) or arrives as status: duplicate, which is merged into the original: anything written in it is added to the original, the original is linked again, and the duplicate goes to the trash. Replaces Save clippings. Set the macro to "Run on plugin load". QuickAdd's settings sync to the phone too, so the script itself does nothing on phones and tablets: there it could run before Sync has brought the latest notes down and link them under stale dates. Notes dated in the future aren't linked; a notice asks you to fix their date-added. When today has no heading yet, it adds one from the date template, the same as the journal's "add date" button, so today starts with its checkboxes.
 
 ```js
 module.exports = {
@@ -74,6 +74,11 @@ async function start(params, settings) {
       app.vault.on("rename", (file, oldPath) => {
         if (!oldPath.startsWith(state.config.folder + "/")) schedule(file);
       });
+      // A note the library service has finished (ready), found to be a duplicate, or asked to link
+      // again. Obsidian has already read the note's properties, so this check costs next to nothing.
+      app.metadataCache.on("changed", (file, _data, cache) => {
+        if (inFolder(file) && needsAction(cache?.frontmatter)) schedule(file);
+      });
     });
   }
 
@@ -83,11 +88,18 @@ async function start(params, settings) {
     const journal = app.vault.getAbstractFileByPath(state.config.journalPath);
     const linked = (journal && app.metadataCache.resolvedLinks[journal.path]) || {};
     for (const f of app.vault.getMarkdownFiles()) {
-      if (!inFolder(f) || linked[f.path]) continue;
+      if (!inFolder(f)) continue;
       const fm = app.metadataCache.getFileCache(f)?.frontmatter;
+      if (needsAction(fm)) { schedule(f); continue; }
+      if (linked[f.path]) continue;
       if (isRecent(addedAt(f, fm, moment), state.config.days, moment)) schedule(f);
     }
   });
+}
+
+// Set by the library service: finished (ready), a duplicate to merge, or "link this again"
+function needsAction(fm) {
+  return !!fm && (fm.status === "ready" || fm.status === "duplicate" || !!fm.relink);
 }
 
 // When the note was added: its date-added, else when the file was created
@@ -148,24 +160,63 @@ async function addLink(app, obsidian, state, file) {
   // date-added decides the day, so wait until Obsidian has read the frontmatter
   await waitForCache(app, file);
   const fm = app.metadataCache.getFileCache(file)?.frontmatter;
+  // The library service is still working on it: linked once it's ready
+  if (fm?.status === "pending") return;
+  if (fm?.status === "duplicate") return mergeDuplicate(app, obsidian, state, file, fm);
+  if (fm?.relink) {
+    await linkUnder(app, obsidian, state, file, String(fm.relink).slice(0, 10), true);
+    await clearProps(app, file, ["relink"]);
+    return;
+  }
   const when = addedAt(file, fm, moment);
   if (isFuture(when, moment)) {
     new obsidian.Notice(`Not linking ${file.basename}: its date-added (${when.format("YYYY-MM-DD")}) is in the future.`, 10000);
     return;
   }
   // Old notes moved into the folder aren't news
-  if (!isRecent(when, state.config.days, moment)) return;
+  if (isRecent(when, state.config.days, moment)) await linkUnder(app, obsidian, state, file, when.format("YYYY-MM-DD"), false);
+  if (fm?.status === "ready") await clearProps(app, file, ["status"]);
+}
 
+// Links the note under that day's heading. force: even if the journal already links it elsewhere.
+async function linkUnder(app, obsidian, state, file, day, force) {
+  const { TFile, moment } = obsidian;
   const journal = app.vault.getAbstractFileByPath(state.config.journalPath);
   if (!(journal instanceof TFile)) throw new Error(`Journal not found at "${state.config.journalPath}"`);
   // Already linked anywhere in the journal (e.g. Link Ingest linking an existing note)
-  if (app.metadataCache.resolvedLinks[journal.path]?.[file.path]) return;
+  if (!force && app.metadataCache.resolvedLinks[journal.path]?.[file.path]) return;
 
   const link = app.fileManager.generateMarkdownLink(file, journal.path);
-  const day = when.format("YYYY-MM-DD");
   // A new heading for today comes from the date template, like the journal's "add date" button
   const dayLines = day === moment().format("YYYY-MM-DD") ? await dateTemplate(app, obsidian, state, journal) : null;
   await app.vault.process(journal, (text) => insertLink(text.split("\n"), link, day, dayLines).join("\n"));
+}
+
+async function clearProps(app, file, keys) {
+  if (!app.vault.getAbstractFileByPath(file.path)) return;
+  await app.fileManager.processFrontMatter(file, (fm) => { for (const k of keys) delete fm[k]; });
+}
+
+// A second save of something already in the library: add anything written in it (and where it was
+// found) to the original, link the original again under the day of the second save, and trash it.
+async function mergeDuplicate(app, obsidian, state, dup, fm) {
+  const { moment, Notice } = obsidian;
+  const target = String(fm["duplicate-of"] || "").replace(/^\[\[|\]\]$/g, "").split("|")[0];
+  const original = target && app.metadataCache.getFirstLinkpathDest(target, dup.path);
+  if (!original || original.path === dup.path) {
+    new Notice(`${dup.basename} is marked as a duplicate of "${target}", which wasn't found. Left as it is.`, 10000);
+    return;
+  }
+  const text = await app.vault.read(dup);
+  const body = text.replace(/^---\n[\s\S]*?\n---\n?/, "").replace(/^\s*## Notes\s*/, "").trim();
+  const origSource = String(app.metadataCache.getFileCache(original)?.frontmatter?.source || "");
+  const extra = [];
+  if (fm.source && String(fm.source).trim() && !origSource.includes(String(fm.source).trim())) extra.push(`Also found via: ${fm.source}`);
+  if (body) extra.push(body);
+  if (extra.length) await app.vault.process(original, (t) => t.trimEnd() + "\n\n" + extra.join("\n\n") + "\n");
+  await linkUnder(app, obsidian, state, original, addedAt(dup, fm, moment).format("YYYY-MM-DD"), true);
+  await app.fileManager.trashFile(dup);
+  new Notice(`Already saved: ${original.basename}. Linked it again${extra.length ? " and added what you wrote" : ""}.`, 8000);
 }
 
 // The date template filled in the way Obsidian's Templates plugin does it ({{date}}, {{time}}, {{title}}),
