@@ -94,7 +94,7 @@ def save_direct(job: dict) -> None:
         return
     props = fill.props_for(note, source=job.get("source", ""), via=job.get("via", "link ingest"),
                            date_added=job.get("date_added") or now_iso())
-    body = "\n## Notes\n\n" + (job["thought"].strip() + "\n" if job.get("thought", "").strip() else "")
+    body = "\n" + (job["thought"].strip() + "\n" if job.get("thought", "").strip() else "")
     path = fill.free_name(FOLDER, note["title"])
     with open(path, "x", encoding="utf-8") as f:  # never overwrites
         f.write(L.render(props, body))
@@ -184,7 +184,7 @@ def write_pending(job: dict) -> None:
         props["yt-channel"] = job["channel"]
     if job.get("category"):
         props["yt-category"] = job["category"]
-    body = "\n## Notes\n\n" + (job["thought"].strip() + "\n" if job.get("thought", "").strip() else "")
+    body = "\n" + (job["thought"].strip() + "\n" if job.get("thought", "").strip() else "")
     path = fill.free_name(FOLDER, props["title"])
     with open(path, "x", encoding="utf-8") as f:
         f.write(L.render(props, body))

@@ -22,7 +22,7 @@ tags:
   - film                              # the type, plus favorite if it is one
 ---
 
-## Notes
+(anything you write)
 ```
 
 **`type`** is one of:

@@ -110,8 +110,6 @@ async function start(params, settings) {
     "status: pending",
     "---",
     "",
-    "## Notes",
-    "",
   ].join("\n");
   if (!app.vault.getAbstractFileByPath(folder)) await app.vault.createFolder(folder);
   const base2 = safeFileName(title) || "Untitled";

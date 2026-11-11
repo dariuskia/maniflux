@@ -185,10 +185,7 @@ def render_note(entry: dict, thought: str, now: datetime, people_folder: str, tz
         *([f"status: {status}"] if status else []),
         "---",
         "",
-        "## Notes",
-        "",
-        *([thought.strip()] if thought.strip() else []),
-        "",
+        *([thought.strip(), ""] if thought.strip() else []),
     ]
     return "\n".join(lines)
 

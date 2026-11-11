@@ -37,7 +37,7 @@ def test_note_format():
     assert "date-archived" in fm and fm["date-archived"] is None and "archive" not in fm
     # finished note: no prompts and no page text
     assert "{{" not in text and "%%" not in text
-    assert text.endswith("---\n\n## Notes\n\nmy thought\n")
+    assert text.endswith("---\n\nmy thought\n")
 
 
 def test_empty_fields_and_books():
@@ -47,7 +47,7 @@ def test_empty_fields_and_books():
     assert fm["creators"] is None and fm["description"] is None
     assert fm["minutes"] is None  # books don't get a length
     assert safe_file_name(e["title"]) == "Quotes and colons a test 1"
-    assert note(e).endswith("## Notes\n\n")
+    assert note(e).endswith("---\n") and "## Notes" not in note(e)
 
 
 def test_write_never_overwrites(tmp_path):

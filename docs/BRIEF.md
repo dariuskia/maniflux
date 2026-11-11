@@ -89,8 +89,6 @@ tags:
 date-archived:
 ---
 
-## Notes
-
 (your thought, if you saved with one)
 ```
 
