@@ -235,9 +235,34 @@ def lookup_music(title: str, short_title: str, creators: list[str]) -> dict:
     return {}
 
 
+def database_cover(ids: dict) -> str:
+    """A cover from the databases, for a note that already has their IDs: Open Library for books,
+    the Cover Art Archive for music. Wikidata has no film posters. "" if there's none."""
+    if ids.get("openlibrary"):
+        r = httpx.get(f"https://openlibrary.org/works/{ids['openlibrary']}.json", headers=UA, timeout=30,
+                      follow_redirects=True)
+        if r.status_code == 200:
+            covers = [c for c in r.json().get("covers") or [] if isinstance(c, int) and c > 0]
+            if covers:
+                return f"https://covers.openlibrary.org/b/id/{covers[0]}-L.jpg"
+    if ids.get("musicbrainz"):
+        url = f"https://coverartarchive.org/release-group/{ids['musicbrainz']}/front-500"
+        if httpx.head(url, headers=UA, timeout=30, follow_redirects=True).status_code == 200:
+            return url
+    return ""
+
+
+def youtube_id(url: str) -> str:
+    m = re.search(r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|embed/|shorts/|live/)|youtu\.be/)([\w-]{11})", url)
+    return m.group(1) if m else ""
+
+
 def page_image(url: str) -> str:
-    """The page's own preview image (og:image), used as a cover when the databases have none.
-    Goodreads, Letterboxd, Bandcamp and Spotify pages all have one."""
+    """The page's own preview image, used as a cover when the databases have none: the poster on
+    Letterboxd, the cover on Goodreads, the art on Bandcamp and Spotify. YouTube won't serve its page
+    to scripts, but its thumbnails are at a fixed address for each video."""
+    if vid := youtube_id(url):
+        return f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
     try:
         r = httpx.get(url, headers={**UA, "Accept": "text/html"}, timeout=20, follow_redirects=True)
     except httpx.HTTPError:
