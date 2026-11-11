@@ -65,18 +65,18 @@ If Miniflux is down, the reader shows a clear message instead of an empty list, 
 
 ## Obsidian
 
-Saving in the reader is the same decision as clipping: it writes a note into `content/`, where the TBR dashboard already picks it up. The reader keeps no read-later list of its own.
+Saving in the reader is the same decision as clipping: it ends up as a note in `content/`, where the dashboards and Bases pick it up. The reader keeps no read-later list of its own.
 
-A saved note uses the existing format, plus a `via` field and a Notes section:
+Since November 2026 the note itself is written by the library service (`library/`), which every saving tool hands its links to; its format is in `library/README.md`. A note saved from Maniflux looks like this:
 
 ```markdown
 ---
 title: "Why Politics Has Become So Frenzied"
 url: "https://…"
 source: "The Atlantic"
-via: reader
 creators:
   - "[[people/Jane Doe|Jane Doe]]"
+via: "[[orgs/The Atlantic|The Atlantic]]"
 published: 2026-10-27
 date-added: 2026-10-30T12:00:00-07:00
 type: writing
@@ -89,19 +89,19 @@ date-archived:
 (your thought, if you saved with one)
 ```
 
-- `minutes` comes from Miniflux's reading time.
-- `type` comes from the link when it's clear (YouTube, arXiv, podcast audio, Substack and the other Link Ingest rules); otherwise the model picks it. `description` is the item's own text when it has fewer than 150 words (a caption, a short post, a feed's summary), with no page fetch; longer items get one written by the model (OpenRouter, `anthropic/claude-haiku-5.5` by default) from their text. With a short item whose type and author are clear, saving makes no model call.
-- If the model call fails, nothing is saved and the card stays, so the save can be tried again.
-- Process New Clips (a QuickAdd macro on the Mac) then links the note at the top of that day's journal entry, below the tasks. It does the same for notes from the Web Clipper and Link Ingest.
+- `source` is the feed it came through; `via` is the outlet that published it.
+- Maniflux sends the item's text, so the library service needn't fetch the page; it writes the description, type and the rest from it.
+- Saving doesn't wait for the model: the card leaves at once. If the library service is down, Maniflux writes a `status: pending` note that the service finishes later.
+- Process New Clips (a QuickAdd macro on the Mac) then links the note at the top of that day's journal entry, below the tasks, once it's ready. It does the same for notes from the Web Clipper and Link Ingest.
 
-Notes keep only the link, the description and your notes; the item text isn't stored.
+Notes keep the link, the description and your notes; the item text isn't stored.
 
 Rules that prevent conflicts:
 
-1. The reader only creates notes. It never edits a note after creating it, except to add lines under `## Highlights`.
-2. A URL already in `content/` is never saved again.
+1. Nothing edits what you write in a note. The library service only changes properties, and never renames or deletes a note; that's left to Obsidian.
+2. A link already in `content/` is never saved again; it's linked in that day's journal again instead.
 3. Saving marks the item read in Miniflux, so it leaves the reader; from then on it lives only in Obsidian.
-4. A note with broken frontmatter is skipped and listed on the reader's settings page, never treated as an error.
+4. A note with broken frontmatter is skipped, never treated as an error.
 
 ## Data
 
@@ -125,8 +125,8 @@ Feedback is recorded from day one even though version one barely uses it: it bec
 Python with FastAPI, SQLite and server-rendered HTML with htmx, run as one more service in `docker-compose.yml`.
 
 - **Address:** `http://127.0.0.1:8090` on the Mac; the phone reaches it through Tailscale.
-- **Vault access:** the vault's `content/` folder is mounted into the container so the reader can write notes and check for duplicates.
-- **Settings in `.env`:** Miniflux API key, path to the vault's `content/` folder, OpenRouter key (and optionally `OPENROUTER_MODEL`).
+- **Vault access:** the vault's `content/` folder is mounted into the container so the reader can check for notes already saved (and write a pending note if the library service is down).
+- **Settings in `.env`:** Miniflux API key, path to the vault's `content/` folder, OpenRouter key for digests (and optionally `OPENROUTER_MODEL`), and `LIBRARY_TOKEN` for the library service.
 - **No frontend build step:** pages are HTML from the server, with htmx for buttons, so changes are quick to make and test.
 
 ## Later

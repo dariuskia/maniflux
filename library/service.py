@@ -12,9 +12,9 @@
 - Every 30 minutes it also runs the older sweep (enrich.py): covers and IDs for notes that lack
   them, and duplicate flags.
 
-The server never renames or deletes a note that anything links to; only Obsidian does (through
-Process New Clips). The one exception is safe: a pending note saved offline, named after the site,
-gets its real title, since nothing links to a note until it's ready.
+The server never renames or deletes a note; only Obsidian does (through Process New Clips), which keeps
+links intact. A pending note saved offline, named after the site, gets rename-to: <its real title>, and
+Process New Clips renames it in Obsidian.
 Run by Docker on the personal server; reachable only over Tailscale, with a token.
 """
 
@@ -142,16 +142,13 @@ def finish_pending(path: Path) -> None:
     L.frontmatter(new)  # must still parse
     if not path.exists() or path.read_text() != before:  # changed while we worked on it: next time
         return
-    # A pending note saved offline is named after the site (the page couldn't be read then). Nothing
-    # links to a pending note yet, so it can take its real title; other names are left alone.
+    # A pending note saved offline is named after the site (the page couldn't be read then). It should take
+    # its real title, but the rename happens in Obsidian (Process New Clips), which keeps the note open and
+    # updates every link to it, journal included. Here it only says which name it wants.
     if not dup and path.stem in (fill.host(fm["url"]), "Untitled"):
-        target = fill.free_name(FOLDER, note["title"])
-        with open(target, "x", encoding="utf-8") as f:
-            f.write(new)
-        path.unlink()
-        log(f"named {path.name} → {target.name}")
-    else:
-        path.write_text(new)
+        new = L.set_props(new, {"rename-to": fill.free_name(FOLDER, note["title"]).stem}, before="date-archived")
+        log(f"{path.name} will be renamed to {note['title']!r} in Obsidian")
+    path.write_text(new)
 
 
 async def worker() -> None:

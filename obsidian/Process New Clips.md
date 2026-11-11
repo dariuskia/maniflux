@@ -168,6 +168,9 @@ async function addLink(app, obsidian, state, file) {
     await clearProps(app, file, ["relink"]);
     return;
   }
+  // Saved offline, so named after the site: take the real title the library service found. Renamed
+  // through Obsidian, so the note stays open and every link to it (the journal included) follows.
+  if (fm?.["rename-to"]) await renameTo(app, file, String(fm["rename-to"]));
   const when = addedAt(file, fm, moment);
   if (isFuture(when, moment)) {
     new obsidian.Notice(`Not linking ${file.basename}: its date-added (${when.format("YYYY-MM-DD")}) is in the future.`, 10000);
@@ -190,6 +193,17 @@ async function linkUnder(app, obsidian, state, file, day, force) {
   // A new heading for today comes from the date template, like the journal's "add date" button
   const dayLines = day === moment().format("YYYY-MM-DD") ? await dateTemplate(app, obsidian, state, journal) : null;
   await app.vault.process(journal, (text) => insertLink(text.split("\n"), link, day, dayLines, force).join("\n"));
+}
+
+async function renameTo(app, file, name) {
+  const safe = name.replace(/[\\/:*?"<>|#^\[\]]/g, "").replace(/\s+/g, " ").trim().slice(0, 120);
+  const folder = file.parent?.path || "";
+  if (safe && safe !== file.basename) {
+    let path = `${folder}/${safe}.md`;
+    for (let n = 2; app.vault.getAbstractFileByPath(path); n++) path = `${folder}/${safe} (${n}).md`;
+    await app.fileManager.renameFile(file, path); // updates links everywhere; file now has the new path
+  }
+  await clearProps(app, file, ["rename-to"]);
 }
 
 async function clearProps(app, file, keys) {

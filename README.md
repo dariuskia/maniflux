@@ -20,7 +20,7 @@ This repo also holds the rest of the setup around it: Miniflux in Docker, script
 - **Ranked list** of unread items, each with the reason for its place ("5h old · Making things ×1.5"). Tabs for All, Read, Watch and Listen; a chip per group of feeds; search with `/`.
 - **Time budget:** pick 10, 20 or 45 minutes and get the best items that fit, using reading time and video length.
 - **Reading view** with a button to fetch the full article when a feed only sends a summary. Opening an item archives it; Unarchive puts it back.
-- **Save to Obsidian:** writes a note to your vault's `content/` folder with title, link, source, author, dates, length, type and a description (the item's own text when it's under 150 words, otherwise 2–3 sentences written by a model through OpenRouter), plus an optional thought of your own. A link already in the vault is never saved twice.
+- **Save to Obsidian:** hands the item to the library service (`library/`), which writes the note in your vault's `content/` folder in the background: title, link, creators, the outlet it came from, type, length, a description and a cover, plus an optional thought of your own. Saving doesn't wait for it. A link already in the vault is linked in today's journal again instead of saved twice.
 - **Steering:** a weight per feed and per group, and rules: keywords or types to boost, lower or hide, and daily limits ("at most 10 news items a day"), each with an optional end date.
 - **Digests:** pick some groups of feeds, say in plain words what you want ("new EP and album releases, and shows in Oakland in the next month") and how often. A model reads what those feeds published and writes it up, every point linked to its source. Digests arrive in your list like any article.
 - **Archive page** with search that matches as you type ("RIP J" finds "RIP Juan Atkins").
@@ -41,7 +41,7 @@ docker compose up -d miniflux db
 
 1. Open http://127.0.0.1:8080, log in with the admin user from `.env`, and add some feeds.
 2. In Miniflux, go to Settings → API Keys, create a key and put it in `.env` as `MINIFLUX_API_KEY`.
-3. Set `VAULT_CONTENT_PATH` to your vault's `content/` folder and `OPENROUTER_API_KEY` to an [OpenRouter](https://openrouter.ai) key (used for each saved note's description).
+3. Set `VAULT_CONTENT_PATH` to your vault's `content/` folder, `OPENROUTER_API_KEY` to an [OpenRouter](https://openrouter.ai) key (for digests, and for the library service that writes saved notes), and `LIBRARY_TOKEN` to a long random string (`openssl rand -hex 24`), which Link Ingest also needs.
 4. Start everything: `docker compose up -d`, then open http://127.0.0.1:8090.
 
 Everything binds to `127.0.0.1`, so it's only reachable from your own machine. To run Miniflux and Maniflux on a server and use them from your phone over Tailscale, see [server/README.md](server/README.md).

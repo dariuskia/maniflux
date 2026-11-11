@@ -1,20 +1,21 @@
 # The personal server
 
-Miniflux, Maniflux and Kill the Newsletter run together on one Hetzner server, reached over Tailscale. ig2rss stays on the Mac, because Instagram is stricter with cloud servers.
+Miniflux, Maniflux, the library service and Kill the Newsletter run together on one Hetzner server, reached over Tailscale. ig2rss stays on the Mac, because Instagram is stricter with cloud servers.
 
 ```
 Hetzner server ("home" in Tailscale)                         Mac
   Kill the Newsletter ── its web server also serves:            ig2rss ◄── Miniflux, over Tailscale
      https://home.<tailnet>.ts.net        → Maniflux            Obsidian ◄─┐
      https://home.<tailnet>.ts.net:8443   → Miniflux                       │ Obsidian Sync
+     https://home.<tailnet>.ts.net:8444   → library service                │
   Miniflux + Postgres, Maniflux, library (Docker, this folder)                      │
   /srv/vault: copy of the vault ◄──────────────────────────────────────────┘
 ```
 
 - **Kill the Newsletter** keeps ports 25, 80 and 443 for its own address, as before.
-- **Maniflux and Miniflux** listen only on the server itself. Kill the Newsletter's web server passes requests on to them for the Tailscale address only, and refuses anyone not on your tailnet.
-- **The vault copy** is kept current by Obsidian Headless (`ob`), with notes and attachments but no Obsidian settings or plugins (about 50 MB). Maniflux saves into its `content/` folder, and Obsidian Sync carries new notes to the Mac and phone, where Process New Clips links them in the journal as usual.
-- **The library service** fills in year, cover and IDs on new book, film, show and music notes in the vault copy's `content/` folder; Obsidian Sync carries the changes to the Mac and phone. See `library/README.md`.
+- **Maniflux, Miniflux and the library service** listen only on the server itself. Kill the Newsletter's web server passes requests on to them for the Tailscale address only, and refuses anyone not on your tailnet.
+- **The vault copy** is kept current by Obsidian Headless (`ob`), with notes and attachments but no Obsidian settings or plugins (about 50 MB). The library service writes saved notes into its `content/` folder, and Obsidian Sync carries them to the Mac and phone, where Process New Clips links them in the journal.
+- **The library service** turns every saved link (from Link Ingest, Maniflux and the Web Clipper) into a finished note: type, creators, via, description, cover, IDs, duplicates caught. Saving never waits for it. Its token is `LIBRARY_TOKEN` in `/root/feed/.env`; Maniflux reads it there, and Link Ingest has it in its settings. See `library/README.md`.
 - **ig2rss** is shared on the Mac's Tailscale address (`tailscale serve`, port 8091). Miniflux fetches from it there, and gets errors on those feeds while the Mac sleeps, catching up when it wakes.
 
 `COMPOSE_PROFILES` in `.env` decides what runs where: `reader` on the server, `ig2rss` on the Mac.
@@ -79,4 +80,4 @@ ssh root@home 'cd /root/feed && docker compose up -d'
 
 ## Moving somewhere else
 
-Everything personal is in this repo, `/root/feed/.env`, the `feed_miniflux-db` and `feed_maniflux-data` volumes, `/root/kill-the-newsletter/data/` and the Obsidian Sync login. A new machine needs `setup.sh`, Kill the Newsletter's `install.sh`, and the same volume copies the move script makes.
+Everything personal is in this repo, `/root/feed/.env`, the `feed_miniflux-db`, `feed_maniflux-data` and `feed_library-data` (what the library service has already tried) volumes, `/root/kill-the-newsletter/data/` and the Obsidian Sync login. A new machine needs `setup.sh`, Kill the Newsletter's `install.sh`, and the same volume copies the move script makes.
