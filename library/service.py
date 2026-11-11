@@ -36,7 +36,7 @@ import library as L
 
 FOLDER = (L.VAULT / L.NOTES_DIR).resolve()  # resolved, so it matches the paths the watcher reports
 TOKEN = os.environ.get("LIBRARY_TOKEN", "")
-SETTLE_SECONDS = float(os.environ.get("LIBRARY_SETTLE_SECONDS", "60"))
+SETTLE_SECONDS = float(os.environ.get("LIBRARY_SETTLE_SECONDS", "10"))
 SWEEP_MINUTES = float(os.environ.get("LIBRARY_SWEEP_MINUTES", "30"))
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
