@@ -12,6 +12,7 @@ import difflib
 import json
 import os
 import re
+import time
 import unicodedata
 from pathlib import Path
 
@@ -32,7 +33,10 @@ def env(name: str, default: str = "") -> str:
     """A setting from the environment or the feed repo's .env. Never printed."""
     if os.environ.get(name):
         return os.environ[name]
-    for line in (FEED_DIR / ".env").read_text().splitlines():
+    env_file = FEED_DIR / ".env"
+    if not env_file.exists():  # e.g. in the server's container, where settings come from the environment
+        return default
+    for line in env_file.read_text().splitlines():
         if line.startswith(name + "="):
             return line.split("=", 1)[1].strip().strip('"').strip("'")
     return default
@@ -200,13 +204,66 @@ def lookup_book_all(title: str, short_title: str, creators: list[str]) -> dict:
     return facts
 
 
+def lookup_music(title: str, short_title: str, creators: list[str]) -> dict:
+    """MusicBrainz: a release group (album, EP, single) with this title by one of the creators.
+    The cover comes from the Cover Art Archive when it has one."""
+    if not creators:
+        return {}
+    query = f'releasegroup:"{short_title}" AND artist:"{creators[0]}"'
+    for wait in (2, 5, 10, 0):  # MusicBrainz answers 503 when asked too often; wait and ask again
+        r = httpx.get("https://musicbrainz.org/ws/2/release-group/", headers=UA, timeout=30,
+                      params={"query": query, "fmt": "json", "limit": 10})
+        if r.status_code != 503 or not wait:
+            break
+        time.sleep(wait)
+    r.raise_for_status()
+    want = _surnames(creators) | {_norm(c) for c in creators}
+    for rg in r.json().get("release-groups", []):
+        artists = [a.get("name", "") for a in rg.get("artist-credit", []) if isinstance(a, dict)]
+        named = {_norm(a) for a in artists} | _surnames(artists)
+        if max(_similar(rg.get("title", ""), short_title), _similar(rg.get("title", ""), title)) >= 0.8 and named & want:
+            out = {"musicbrainz": rg["id"]}
+            if rg.get("first-release-date"):
+                out["year"] = rg["first-release-date"][:4]
+            kind = (rg.get("primary-type") or "").lower()
+            out["form"] = {"album": "album", "ep": "ep", "single": "track"}.get(kind, "")
+            art = httpx.head(f"https://coverartarchive.org/release-group/{rg['id']}/front-500",
+                             headers=UA, timeout=30, follow_redirects=True)
+            if art.status_code == 200:
+                out["cover"] = f"https://coverartarchive.org/release-group/{rg['id']}/front-500"
+            return out
+    return {}
+
+
+def page_image(url: str) -> str:
+    """The page's own preview image (og:image), used as a cover when the databases have none.
+    Goodreads, Letterboxd, Bandcamp and Spotify pages all have one."""
+    try:
+        r = httpx.get(url, headers={**UA, "Accept": "text/html"}, timeout=20, follow_redirects=True)
+    except httpx.HTTPError:
+        return ""
+    # Structured data first: on Letterboxd it's the poster, where og:image is a wide still
+    for block in re.findall(r'<script[^>]+application/ld\+json[^>]*>(.*?)</script>', r.text[:500_000], re.S):
+        m = re.search(r'"image"\s*:\s*"(https?:[^"]+)"', block)
+        if m:
+            return m.group(1).replace("\\/", "/")
+    for pattern in (r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)',
+                    r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']'):
+        m = re.search(pattern, r.text[:300_000])
+        if m and m.group(1).startswith("http"):
+            return m.group(1).replace("&amp;", "&")
+    return ""
+
+
 def lookup(kind: str, title: str, short_title: str, creators: list[str]) -> dict:
     if kind == "book":
         return lookup_book_all(title, short_title, creators)
     if kind == "essay":
         return lookup_wikidata(title, short_title, creators, "P50")
-    if kind in ("film", "series"):
+    if kind in ("film", "series", "show"):
         return lookup_film(title, short_title, creators)
+    if kind == "music":
+        return lookup_music(title, short_title, creators)
     return {}
 
 
@@ -265,3 +322,49 @@ def work_props(*, kind: str, title: str, creators: list[str], year: str, date_ad
             props[k] = facts[k]
     props["tags"] = tags
     return props
+
+
+# ---------- editing a note in place ----------
+
+def set_props(text: str, updates: dict, remove: tuple = (), before: str = "tags",
+              in_place_of: dict | None = None) -> str:
+    """Changes only the named properties of a note, keeping every other line as it is. An existing
+    property is replaced where it stands; one named in in_place_of ({new: old}) takes the old one's
+    place; any other new one goes just before `before` (or at the end).
+    Values are strings or lists of strings, written the same way as render()."""
+    fm_text, body = split_note(text)
+    blocks: list[list[str]] = []  # one block per property: its line plus any indented lines under it
+    for line in fm_text.split("\n"):
+        if blocks and (line.startswith((" ", "\t")) or not line.strip()):
+            blocks[-1].append(line)
+        else:
+            blocks.append([line])
+
+    def key(block):
+        m = re.match(r"^([^:\s][^:]*):", block[0])
+        return m.group(1) if m else None
+
+    def lines_for(k, v):
+        if isinstance(v, list):
+            return [f"{k}:"] + [f"  - {_yaml_value(x)}" for x in v]
+        return [f"{k}: {_yaml_value(str(v))}".rstrip()]
+
+    done = set()
+    out = []
+    for b in blocks:
+        k = key(b)
+        swap = next((n for n, o in (in_place_of or {}).items() if o == k and n in updates and n not in done), None)
+        if swap:  # e.g. creators goes where author was
+            out.append(lines_for(swap, updates[swap]))
+            done.add(swap)
+        if k in remove:
+            continue
+        if k in updates:
+            out.append(lines_for(k, updates[k]))
+            done.add(k)
+        else:
+            out.append(b)
+    new = [lines_for(k, v) for k, v in updates.items() if k not in done]
+    at = next((i for i, b in enumerate(out) if key(b) == before), len(out))
+    out[at:at] = new
+    return "---\n" + "\n".join(l for b in out for l in b) + "\n---\n" + body

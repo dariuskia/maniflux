@@ -3,14 +3,14 @@
 import re
 from urllib.parse import urlsplit
 
-TYPES = ["article", "video", "podcast", "paper", "music", "thread", "book", "other"]
+TYPES = ["article", "video", "podcast", "paper", "music", "thread", "book", "film", "other"]
 
 # The kinds above decide ranking, rules and tabs. Saved notes use the library types and an optional
 # form (see library/README.md; the same mapping as Link Ingest's NOTE_TYPE).
 NOTE_TYPE = {
     "article": ("writing", ""), "paper": ("research", "paper"), "thread": ("writing", "thread"),
     "video": ("video", ""), "podcast": ("podcast", "episode"), "music": ("music", ""),
-    "book": ("book", ""), "other": ("project", ""),
+    "book": ("book", ""), "film": ("film", ""), "other": ("project", ""),
 }
 
 
@@ -40,6 +40,12 @@ def rule_type(url: str) -> str | None:
         return "podcast"
     if re.search(r"(^|\.)youtube\.com$|^youtu\.be$|(^|\.)vimeo\.com$", h):
         return "video"
+    # Films and books (the library service then adds year, cover and IDs to the saved note)
+    if (h == "letterboxd.com" and path.startswith("/film/")) or (h.endswith("imdb.com") and path.startswith("/title/")):
+        return "film"
+    if (h == "goodreads.com" and re.match(r"^/(en/)?book/show/", path)) or \
+            (h == "openlibrary.org" and re.match(r"^/(works|books)/", path)):
+        return "book"
     if re.search(r"(^|\.)(arxiv\.org|openreview\.net|biorxiv\.org|ssrn\.com|aclanthology\.org)$", h):
         return "paper"
     if re.search(r"^(podcasts\.apple\.com|overcast\.fm|pca\.st)$", h):

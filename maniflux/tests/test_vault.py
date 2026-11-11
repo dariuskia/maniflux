@@ -114,3 +114,13 @@ def test_kinds_become_library_types():
                             "podcast": ("podcast", "episode"), "other": ("project", "")}.items():
         fm = read_frontmatter(note(make_entry(1, "A title", author="Jane Doe"), note_type=kind))
         assert fm["type"] == t and (fm["form"] or "") == form and fm["tags"] == ["clippings", t]
+
+
+def test_film_and_book_links():
+    from app import kinds
+    assert kinds.rule_type("https://letterboxd.com/film/close-up/") == "film"
+    assert kinds.rule_type("https://www.imdb.com/title/tt0100234/") == "film"
+    assert kinds.rule_type("https://www.goodreads.com/en/book/show/52374.X") == "book"
+    assert kinds.rule_type("https://letterboxd.com/someone/") is None
+    fm = read_frontmatter(note(make_entry(1, "Close-Up", url="https://letterboxd.com/film/close-up/"), note_type="film"))
+    assert fm["type"] == "film" and fm["tags"] == ["clippings", "film"]

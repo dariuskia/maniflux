@@ -17,7 +17,7 @@ LOWER = 0.5
 # Tabs on the list: which item types each one shows
 SHOW = {
     "read": {"article", "paper", "thread", "book", "other"},
-    "watch": {"video"},
+    "watch": {"video", "film"},
     "listen": {"podcast", "music"},
 }
 

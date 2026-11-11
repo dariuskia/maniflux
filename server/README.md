@@ -7,13 +7,14 @@ Hetzner server ("home" in Tailscale)                         Mac
   Kill the Newsletter ── its web server also serves:            ig2rss ◄── Miniflux, over Tailscale
      https://home.<tailnet>.ts.net        → Maniflux            Obsidian ◄─┐
      https://home.<tailnet>.ts.net:8443   → Miniflux                       │ Obsidian Sync
-  Miniflux + Postgres, Maniflux (Docker, this folder)                      │
+  Miniflux + Postgres, Maniflux, library (Docker, this folder)                      │
   /srv/vault: copy of the vault ◄──────────────────────────────────────────┘
 ```
 
 - **Kill the Newsletter** keeps ports 25, 80 and 443 for its own address, as before.
 - **Maniflux and Miniflux** listen only on the server itself. Kill the Newsletter's web server passes requests on to them for the Tailscale address only, and refuses anyone not on your tailnet.
 - **The vault copy** is kept current by Obsidian Headless (`ob`), with notes and attachments but no Obsidian settings or plugins (about 50 MB). Maniflux saves into its `content/` folder, and Obsidian Sync carries new notes to the Mac and phone, where Process New Clips links them in the journal as usual.
+- **The library service** fills in year, cover and IDs on new book, film, show and music notes in the vault copy's `content/` folder; Obsidian Sync carries the changes to the Mac and phone. See `library/README.md`.
 - **ig2rss** is shared on the Mac's Tailscale address (`tailscale serve`, port 8091). Miniflux fetches from it there, and gets errors on those feeds while the Mac sleeps, catching up when it wakes.
 
 `COMPOSE_PROFILES` in `.env` decides what runs where: `reader` on the server, `ig2rss` on the Mac.

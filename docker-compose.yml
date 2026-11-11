@@ -54,6 +54,22 @@ services:
       - ${VAULT_CONTENT_PATH}:/vault/content
       - maniflux-data:/data
 
+  # library: fills in new books, films, shows and music in the vault's content/ folder (year, cover,
+  # database IDs). See library/README.md.
+  library:
+    build: ./library
+    profiles: [reader]
+    restart: unless-stopped
+    environment:
+      VAULT_PATH: /vault
+      LIBRARY_STATE: /data/state.json
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-haiku-5.5}
+      TZ: ${TZ:-America/Los_Angeles}
+    volumes:
+      - ${VAULT_CONTENT_PATH}:/vault/content
+      - library-data:/data
+
   # ig2rss: one RSS feed per Instagram account, for Miniflux. Status page: http://127.0.0.1:8091
   # Runs on the Mac; Miniflux on the server reaches it over Tailscale. See ig2rss/README.md.
   ig2rss:
@@ -91,6 +107,7 @@ services:
       start_period: 30s
 
 volumes:
+  library-data:
   miniflux-db:
   maniflux-data:
   ig2rss-data:
