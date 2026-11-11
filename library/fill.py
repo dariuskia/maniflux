@@ -149,7 +149,8 @@ def gather(url: str) -> dict:
         "authors": list(dict.fromkeys(meta_authors + ld_authors)),
         "generator": m(name="generator"),
         # The page's own title, as the browser tab shows it: the note's title
-        "page_title": re.sub(r"\s+", " ", doc.title.get_text()).strip() if doc.title else "",
+        # (only the <title> in the page's head: icons in the page can have their own, like Goodreads' stars)
+        "page_title": re.sub(r"\s+", " ", doc.head.title.get_text()).strip() if doc.head and doc.head.title else "",
     })
     for t in doc(["script", "style", "noscript", "nav", "header", "footer", "aside", "form", "svg", "iframe"]):
         t.decompose()
