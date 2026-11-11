@@ -66,6 +66,7 @@ services:
       IG2RSS_LOGIN: ${IG2RSS_LOGIN:-}
       IG2RSS_POLL_HOURS: ${IG2RSS_POLL_HOURS:-6}
       IG2RSS_REELS: ${IG2RSS_REELS:-0}
+      IG2RSS_FEED_BASE_URL: ${IG2RSS_FEED_BASE_URL:-http://ig2rss:8091}
       TZ: ${TZ:-America/Los_Angeles}
     # Look up names directly, so the Mac's hosts-file block on Instagram doesn't apply to ig2rss
     dns:

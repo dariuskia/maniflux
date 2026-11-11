@@ -11,8 +11,9 @@ POLL_HOURS = max(1.0, float(os.environ.get("IG2RSS_POLL_HOURS") or 6))
 # Also read the Reels tab. Reels shared to the profile grid already come through posts; this adds one request per reel.
 REELS = os.environ.get("IG2RSS_REELS", "0").strip().lower() in ("1", "true", "yes")
 TZ = ZoneInfo(os.environ.get("TZ", "America/Los_Angeles"))
-# Where Miniflux (in Docker) and a browser on this Mac reach ig2rss; shown on the status page
-INTERNAL_URL = "http://ig2rss:8091"
+# The address Miniflux reaches ig2rss at, shown on the status page as the feed address to add.
+# Miniflux in Docker on the same machine: http://ig2rss:8091. On the personal server: the Mac's Tailscale address.
+INTERNAL_URL = (os.environ.get("IG2RSS_FEED_BASE_URL") or "http://ig2rss:8091").strip().rstrip("/")
 LOCAL_URL = "http://127.0.0.1:8091"
 
 # Posts read on an account's first check (or preview). Logged out, Instagram needs one request per post, so fewer.
