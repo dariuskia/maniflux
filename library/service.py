@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -198,7 +199,8 @@ def pending_notes() -> list[Path]:
                 head = f.read(4000)
         except OSError:
             continue
-        if "\nstatus: pending" in head:
+        # status: pending, also written with quotes ("status": "pending"), as the Web Clipper does
+        if re.search(r'(?m)^["\']?status["\']?\s*:\s*["\']?pending["\']?\s*$', head):
             out.append(p)
     return out
 

@@ -366,8 +366,9 @@ def set_props(text: str, updates: dict, remove: tuple = (), before: str = "tags"
             blocks.append([line])
 
     def key(block):
+        # "date-added": and 'date-added': are the same property as date-added: (the Web Clipper quotes names)
         m = re.match(r"^([^:\s][^:]*):", block[0])
-        return m.group(1) if m else None
+        return m.group(1).strip().strip('"').strip("'") if m else None
 
     def lines_for(k, v):
         if isinstance(v, list):
