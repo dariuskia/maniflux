@@ -57,7 +57,7 @@ def test_short_item_uses_its_own_text_as_description(client, fake, ai):
     note = next(client.content_dir.glob("*.md"))
     fm = read_frontmatter(note.read_text())
     assert fm["description"] == "A caption, on two lines."
-    assert fm["type"] == "article" and fm["tags"] == ["clippings", "article"]  # "Essay" counts as article
+    assert fm["type"] == "writing" and fm["tags"] == ["clippings", "writing"]  # "Essay" counts as writing
     assert fm["minutes"] == 5
     assert "%%" not in note.read_text() and "{{" not in note.read_text()
     assert '"type":' in ai.prompts[0] and '"description":' not in ai.prompts[0]
@@ -169,8 +169,27 @@ def test_groups(client, fake):
 
     r = client.post(f"/feeds/2/groups/{gid}")
     assert 'class="chip on"' in r.text
+    # the chip's answer also updates the group's list and count elsewhere on the page
+    assert f'id="members-{gid}"' in r.text and 'hx-swap-oob="true">1 feed<' in r.text
+    assert 'id="fgroups-2" class="" hx-swap-oob="true">News<' in r.text
     page = client.get("/feeds").text
-    assert "Not in a group" in page and page.index("Example Feed") < page.index("News Feed")
+    group_list, feed_list = page.split("<h2>Feeds</h2>")
+    listed, menu = group_list.split("<select")
+    assert "1 feed<" in listed and ">News Feed</a>" in listed and "Example Feed" not in listed
+    assert '<option value="1">Example Feed' in menu and "News Feed" not in menu
+    assert "Not in a group" in feed_list and feed_list.index("Example Feed") < feed_list.index("News Feed")
+
+    # editing from the group's list: add, then take out, with the chip kept in step
+    r = client.post(f"/groups/{gid}/feeds", data={"feed_id": "1"})
+    assert r.text.lstrip().startswith(f'<div id="members-{gid}"') and ">Example Feed</a>" in r.text
+    assert f'id="chip-1-{gid}" class="chip on"' in r.text and ">2 feeds<" in r.text
+    assert db.memberships()[1] == {gid}
+    r = client.post(f"/groups/{gid}/feeds/1/remove")
+    assert ">Example Feed</a>" not in r.text.split("<select")[0] and '<option value="1">Example Feed' in r.text
+    assert f'id="chip-1-{gid}" class="chip "' in r.text and ">1 feed<" in r.text
+    assert 1 not in db.memberships()
+    assert 'id="fgroups-1" class="none" hx-swap-oob="true">No group<' in r.text
+    assert client.post("/groups/999/feeds", data={"feed_id": "1"}).status_code == 404
 
     # filter the list by group
     text = client.get(f"/?group={gid}").text

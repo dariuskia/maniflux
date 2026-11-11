@@ -13,20 +13,28 @@
 <p class="muted">Weights: 1 is normal, 0 hides, 3 pushes up. An item's score is multiplied by its feed's weight and by its group's. A feed in several groups gets the highest of their weights.</p>
 
 <h2>Groups</h2>
+<div class="tiles">
 {% for gid, g in groups.items() %}
-  <div class="weight group">
-    <form method="post" action="/groups/{{ gid }}/rename" class="rename">
-      <input name="name" value="{{ g.name }}" aria-label="Group name" onchange="this.form.submit()">
-      <span class="muted">{{ sizes[gid] }} feed{{ '' if sizes[gid] == 1 else 's' }}</span>
-    </form>
-    {{ slider("/groups/" ~ gid ~ "/weight", g.weight) }}
-    <form method="post" action="/groups/{{ gid }}/delete" data-confirm="Delete the group “{{ g.name }}”? Its feeds stay; daily limits on this group are removed." onsubmit="return confirm(this.dataset.confirm)">
-      <button class="small">Delete</button>
-    </form>
-  </div>
+  <section class="tile group">
+    <div class="tile-head">
+      <form method="post" action="/groups/{{ gid }}/rename" class="rename">
+        <input name="name" value="{{ g.name }}" aria-label="Group name" onchange="this.form.submit()">
+      </form>
+      <form method="post" action="/groups/{{ gid }}/delete" data-confirm="Delete the group “{{ g.name }}”? Its feeds stay; daily limits on this group are removed." onsubmit="return confirm(this.dataset.confirm)">
+        <button class="small quiet" aria-label="Delete {{ g.name }}" title="Delete group">Delete</button>
+      </form>
+    </div>
+    <div class="slide">{{ slider("/groups/" ~ gid ~ "/weight", g.weight) }}</div>
+    {% set members, others = lists.get(gid, ([], [])) %}
+    <details class="members">
+      <summary class="muted">{% with oob=False, n=members|length %}{% include "_count.html" %}{% endwith %}</summary>
+      {% with oob=False %}{% include "_group_members.html" %}{% endwith %}
+    </details>
+  </section>
 {% else %}
   <p class="muted">No groups yet.</p>
 {% endfor %}
+</div>
 <form method="post" action="/groups" class="add-group">
   <input name="name" placeholder="New group, e.g. News" required>
   <button>Add group</button>
@@ -34,21 +42,25 @@
 
 <h2>Feeds</h2>
 {% if error %}<div class="problem"><p>{{ error }}</p></div>{% endif %}
-{% for f in feeds %}
-  {% if loop.first and not f.groups %}<h3>Not in a group</h3>{% endif %}
-  {% if not loop.first and f.groups and not loop.previtem.groups %}<h3>In groups</h3>{% endif %}
-  <div class="feed">
-    <div class="weight">
-      <label>{{ f.title }}</label>
-      {{ slider("/feeds/" ~ f.id ~ "/weight", f.weight) }}
-    </div>
+{% for heading, part in [("Not in a group", feeds|rejectattr("groups")|list), ("In groups", feeds|selectattr("groups")|list)] if part %}
+<h3>{{ heading }} <span class="muted">· {{ part|length }}</span></h3>
+<div class="tiles">
+  {% for f in part %}
+  <section class="tile feed">
+    <div class="name">{% if f.site_url %}<a href="{{ f.site_url }}" target="_blank" rel="noopener">{{ f.title }}</a>{% else %}{{ f.title }}{% endif %}</div>
+    <div class="slide">{{ slider("/feeds/" ~ f.id ~ "/weight", f.weight) }}</div>
     {% if groups %}
-    <div class="chips">
-      {% for gid, g in groups.items() %}
-        {% with feed_id=f.id, on=(gid in f.groups) %}{% include "_group_chip.html" %}{% endwith %}
-      {% endfor %}
-    </div>
+    <details class="fgroups">
+      <summary>{% with feed_id=f.id, names=f.group_names, oob=False %}{% include "_feed_groups.html" %}{% endwith %}</summary>
+      <div class="chips">
+        {% for gid, g in groups.items() %}
+          {% with feed_id=f.id, on=(gid in f.groups), oob=False %}{% include "_group_chip.html" %}{% endwith %}
+        {% endfor %}
+      </div>
+    </details>
     {% endif %}
-  </div>
+  </section>
+  {% endfor %}
+</div>
 {% endfor %}
 {% endblock %}

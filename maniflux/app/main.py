@@ -583,20 +583,62 @@ async def old_weights():
     return RedirectResponse("/feeds", status_code=301)
 
 
+def _site_link(feed: dict) -> str:
+    """Where a feed's name links on the Feeds page: its website. Instagram feeds link to ig2rss's page of
+    the posts it has saved. Newsletter feeds from Kill the
+    Newsletter have no website (their site is the feed file itself), so they get no link. Maniflux's
+    own digest feed links within Maniflux, wherever it runs now."""
+    site = feed.get("site_url") or ""
+    # ig2rss: its own page of the posts it has saved, rather than the Instagram profile
+    if m := re.match(r"(https?://[^/]+)/feeds/([a-z0-9._]+)\.xml$", feed.get("feed_url") or ""):
+        if "instagram.com" in site:
+            return f"{m.group(1)}/preview/{m.group(2)}"
+    if not site or site == feed.get("feed_url") or site.endswith(".xml"):
+        return ""
+    if site.startswith(("http://127.0.0.1:8090", "http://localhost:8090")):
+        return site.split(":8090", 1)[1] or "/"
+    return site
+
+
+async def _feed_rows(request: Request) -> tuple[list[dict], dict]:
+    """Every Miniflux feed with its weight and groups, plus the groups. Raises MinifluxError."""
+    steer = request.app.state.db.steering()
+    feeds = await request.app.state.mf.feeds()
+    rows = [{"id": f["id"], "title": f["title"], "site_url": _site_link(f), "weight": steer.feed_weights.get(f["id"], 1.0),
+             "groups": steer.memberships.get(f["id"], set()) & set(steer.groups)} for f in feeds]
+    for r in rows:  # the feed's groups by name, in the order the page lists groups
+        r["group_names"] = [g["name"] for gid, g in steer.groups.items() if gid in r["groups"]]
+    return rows, steer.groups
+
+
+def _group_lists(rows: list[dict], gid: int) -> tuple[list[dict], list[dict]]:
+    """A group's feeds, and the feeds that could be added to it, each by name."""
+    by_name = sorted(rows, key=lambda r: r["title"].lower())
+    return [r for r in by_name if gid in r["groups"]], [r for r in by_name if gid not in r["groups"]]
+
+
 @app.get("/feeds", response_class=HTMLResponse)
 async def feeds_view(request: Request, msg: str | None = None):
-    db: DB = request.app.state.db
-    steer = db.steering()
     try:
-        feeds = await request.app.state.mf.feeds()
+        rows, groups = await _feed_rows(request)
     except MinifluxError as e:
-        return page(request, "feeds.html", error=str(e), feeds=[], groups=steer.groups, msg=msg)
-    rows = [{"id": f["id"], "title": f["title"], "weight": steer.feed_weights.get(f["id"], 1.0),
-             "groups": steer.memberships.get(f["id"], set()) & set(steer.groups)} for f in feeds]
+        groups = request.app.state.db.groups()
+        return page(request, "feeds.html", error=str(e), feeds=[], groups=groups, lists={}, msg=msg)
     # Feeds not in any group first, so new ones get sorted
     rows.sort(key=lambda r: (bool(r["groups"]), r["title"].lower()))
-    sizes = {g: sum(g in r["groups"] for r in rows) for g in steer.groups}
-    return page(request, "feeds.html", feeds=rows, groups=steer.groups, sizes=sizes, error=None, msg=msg)
+    lists = {g: _group_lists(rows, g) for g in groups}
+    return page(request, "feeds.html", feeds=rows, groups=groups, lists=lists, error=None, msg=msg)
+
+
+async def _membership_changed(request: Request, feed_id: int, group_id: int, edited_from: str) -> HTMLResponse:
+    """After a feed joins or leaves a group: the part of the page that was edited, plus updates to the
+    other places on the page that show the same thing (the group's list and count, the feed's chip)."""
+    rows, groups = await _feed_rows(request)
+    members, others = _group_lists(rows, group_id)
+    on = any(r["id"] == feed_id for r in members)
+    names = next((r["group_names"] for r in rows if r["id"] == feed_id), [])
+    return page(request, "_membership.html", g=groups[group_id], members=members, others=others,
+                feed_id=feed_id, on=on, names=names, edited_from=edited_from)
 
 
 def _weight_label(weight: float) -> HTMLResponse:
@@ -613,13 +655,35 @@ async def set_feed_weight(request: Request, tasks: BackgroundTasks, feed_id: int
 
 @app.post("/feeds/{feed_id}/groups/{group_id}", response_class=HTMLResponse)
 async def toggle_feed_group(request: Request, tasks: BackgroundTasks, feed_id: int, group_id: int):
+    """A chip under a feed: puts the feed in the group or takes it out."""
     db: DB = request.app.state.db
-    groups = db.groups()
-    if group_id not in groups:
+    if group_id not in db.groups():
         return Response(status_code=404)
-    member = db.toggle_member(feed_id, group_id)
+    db.toggle_member(feed_id, group_id)
     tasks.add_task(rescore, request.app)
-    return page(request, "_group_chip.html", feed_id=feed_id, g=groups[group_id], on=member)
+    return await _membership_changed(request, feed_id, group_id, "chip")
+
+
+@app.post("/groups/{group_id}/feeds", response_class=HTMLResponse)
+async def add_to_group(request: Request, tasks: BackgroundTasks, group_id: int, feed_id: int = Form(...)):
+    """'Add a feed…' in a group's list."""
+    db: DB = request.app.state.db
+    if group_id not in db.groups():
+        return Response(status_code=404)
+    db.set_member(feed_id, group_id, True)
+    tasks.add_task(rescore, request.app)
+    return await _membership_changed(request, feed_id, group_id, "list")
+
+
+@app.post("/groups/{group_id}/feeds/{feed_id}/remove", response_class=HTMLResponse)
+async def remove_from_group(request: Request, tasks: BackgroundTasks, group_id: int, feed_id: int):
+    """The × next to a feed in a group's list."""
+    db: DB = request.app.state.db
+    if group_id not in db.groups():
+        return Response(status_code=404)
+    db.set_member(feed_id, group_id, False)
+    tasks.add_task(rescore, request.app)
+    return await _membership_changed(request, feed_id, group_id, "list")
 
 
 @app.post("/groups")
