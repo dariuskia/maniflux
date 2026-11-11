@@ -2,7 +2,11 @@
 # requires-python = ">=3.11"
 # dependencies = ["httpx", "pyyaml"]
 # ///
-"""Gives every note in content/ the new `via` (the organisation or outlet that put it out, linked into
+"""DONE: ran once on 2026-11-10: via on 255 notes, 3 organisations moved from people/ to orgs/, 189
+notes made in orgs/, "Staff Writer" dropped from creators. Kept as a record; it refuses to run again.
+
+What it did:
+Gives every note in content/ the new `via` (the organisation or outlet that put it out, linked into
 orgs/) and moves organisations that were filed as people into orgs/.
 
     uv run library/backfill_via.py            # dry run: asks the LLM, saves the plan, prints it
@@ -29,10 +33,11 @@ from urllib.parse import urlsplit
 
 import httpx
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import library as L  # noqa: E402
 
 PLAN = Path.home() / "feed-backups" / "via-backfill-plan.json"
+DROP_CREATORS = {"Staff Writer"}  # not a creator: the byline for "no name given"
 TOOL_NAMES = {"clip", "reader", "link ingest", "web clipper", "maniflux", "linkingest"}
 PLATFORMS = {"youtube", "substack", "spotify", "soundcloud", "bandcamp", "apple podcasts", "arxiv", "medium", "x",
              "twitter", "instagram", "vimeo", "mixcloud", "google", "github", "linkedin", "tiktok", "reddit"}
@@ -131,6 +136,9 @@ def apply(plan: list[dict]) -> None:
         fm = L.frontmatter(text)
         creators = [L.link_target(c) for c in (fm.get("creators") or []) if c and c.strip()]
         updates = {"via": L.org_link(x["via"]) if x["via"] else ""}
+        if any(c in DROP_CREATORS for c in creators):  # bylines that mean "no name given"
+            creators = [c for c in creators if c not in DROP_CREATORS]
+            updates["creators"] = [L.org_link(c) if c in x["org_creators"] else L.person_link(c) for c in creators]
         if any(c in org_names for c in creators):
             updates["creators"] = [L.org_link(c) if c in x["org_creators"] else L.person_link(c) for c in creators]
         old_via = str(fm.get("via") or "").strip()
@@ -172,6 +180,7 @@ def apply(plan: list[dict]) -> None:
 
 
 def main() -> None:
+    sys.exit("Already done on 2026-11-10; see the note at the top of this file.")
     if "--apply" in sys.argv:
         if not PLAN.exists():
             sys.exit("No saved plan; run the dry run first.")

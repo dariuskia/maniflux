@@ -83,9 +83,6 @@ type: writing
 form:
 minutes: 9
 description: "A 2-3 sentence plain summary of what the piece covers."
-tags:
-  - clippings
-  - writing
 date-archived:
 ---
 

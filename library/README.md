@@ -18,8 +18,6 @@ type: film
 form:                                 # optional detail within the type
 imdb: tt0100234                       # IDs from open databases, when found
 wikidata: Q498277
-tags:
-  - film                              # the type, plus favorite if it is one
 ---
 
 (anything you write)
@@ -43,6 +41,8 @@ tags:
 Writing about music, film or art is still `writing`; it connects to the work through `people/` links.
 
 **Archiving:** `date-archived` is the date you first archived something, and stays the same if you archive it again. Empty means not archived yet. Things imported from other platforms come in archived, with the platform's date (when you liked it, watched it, read it), or the import date if there isn't one.
+
+**Tags** are yours: no tool writes any (the type is in `type`, and everything here is a saved item anyway).
 
 **Creators** (`creators`, on every note, for writing as much as films and music) are links into `people/` (one note per person, whatever they make). Bands, labels, studios, publishers and venues will go in their own folder when the first ones arrive.
 

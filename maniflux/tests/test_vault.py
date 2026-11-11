@@ -33,7 +33,7 @@ def test_note_format():
     assert fm["type"] == "writing" and fm["form"] is None  # an article is writing, with no form
     assert fm["minutes"] == 9
     assert fm["description"] == 'Says "a lot": about politics.'
-    assert fm["tags"] == ["clippings", "writing"]
+    assert "tags" not in fm  # tags are yours; the tools don't write any
     assert "date-archived" in fm and fm["date-archived"] is None and "archive" not in fm
     # finished note: no prompts and no page text
     assert "{{" not in text and "%%" not in text
@@ -113,7 +113,7 @@ def test_kinds_become_library_types():
     for kind, (t, form) in {"paper": ("research", "paper"), "thread": ("writing", "thread"),
                             "podcast": ("podcast", "episode"), "other": ("project", "")}.items():
         fm = read_frontmatter(note(make_entry(1, "A title", author="Jane Doe"), note_type=kind))
-        assert fm["type"] == t and (fm["form"] or "") == form and fm["tags"] == ["clippings", t]
+        assert fm["type"] == t and (fm["form"] or "") == form and "tags" not in fm
 
 
 def test_film_and_book_links():
@@ -123,4 +123,4 @@ def test_film_and_book_links():
     assert kinds.rule_type("https://www.goodreads.com/en/book/show/52374.X") == "book"
     assert kinds.rule_type("https://letterboxd.com/someone/") is None
     fm = read_frontmatter(note(make_entry(1, "Close-Up", url="https://letterboxd.com/film/close-up/"), note_type="film"))
-    assert fm["type"] == "film" and fm["tags"] == ["clippings", "film"]
+    assert fm["type"] == "film" and "tags" not in fm

@@ -418,7 +418,6 @@ def props_for(note: dict, *, source: str, date_added: str) -> dict:
     for k in ("year", "cover", *L_IDS):
         if note.get(k):
             props[k] = note[k]
-    props["tags"] = ["clippings", note["type"]]
     props["date-archived"] = ""
     props["status"] = "ready"
     return props
