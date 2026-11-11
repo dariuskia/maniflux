@@ -30,11 +30,11 @@ def test_note_format():
     assert fm["author"] == ["[[people/Jane Doe|Jane Doe]]", "[[people/John Roe|John Roe]]"]
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", fm["published"])
     assert fm["date-added"] == "2026-10-30T12:00:00-07:00"
-    assert fm["type"] == "article"
+    assert fm["type"] == "writing" and fm["form"] is None  # an article is writing, with no form
     assert fm["minutes"] == 9
     assert fm["description"] == 'Says "a lot": about politics.'
-    assert fm["tags"] == ["clippings", "article"]
-    assert "archive" in fm and fm["archive"] is None
+    assert fm["tags"] == ["clippings", "writing"]
+    assert "date-archived" in fm and fm["date-archived"] is None and "archive" not in fm
     # finished note: no prompts and no page text
     assert "{{" not in text and "%%" not in text
     assert text.endswith("---\n\n## Notes\n\nmy thought\n")
@@ -107,3 +107,10 @@ def test_email_authors_are_not_names():
     fm = read_frontmatter(render_note(make_entry(2, author="Jane Doe"), "", NOW, "people", TZ,
                                       note_type="article", description="d", authors=["Someone Else"]))
     assert fm["author"] == ["[[people/Jane Doe|Jane Doe]]"]
+
+
+def test_kinds_become_library_types():
+    for kind, (t, form) in {"paper": ("research", "paper"), "thread": ("writing", "thread"),
+                            "podcast": ("podcast", "episode"), "other": ("project", "")}.items():
+        fm = read_frontmatter(note(make_entry(1, "A title", author="Jane Doe"), note_type=kind))
+        assert fm["type"] == t and (fm["form"] or "") == form and fm["tags"] == ["clippings", t]

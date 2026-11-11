@@ -1,4 +1,4 @@
-"""Obsidian content/ folder: spotting saved URLs and writing new notes.
+"""The vault's content/ folder: spotting saved URLs and writing new notes.
 
 Maniflux only creates notes. It never edits or deletes one.
 """
@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 import yaml
 
+from . import kinds
 from .text import clean_author, clean_url, parse_time, url_key
 
 
@@ -61,7 +62,7 @@ def urls_of(fm: dict) -> list[str]:
 
 
 class VaultIndex:
-    """Which URLs are already in content/, kept up to date by re-reading changed files."""
+    """Which URLs are already in the notes folder, kept up to date by re-reading changed files."""
 
     def __init__(self, folder: Path):
         self.folder = folder
@@ -158,6 +159,7 @@ def render_note(entry: dict, thought: str, now: datetime, people_folder: str, tz
                 note_type: str, description: str, authors: list[str] | None = None) -> str:
     """authors: from the model, used when the feed doesn't name a real author."""
     props = note_props(entry, tz)
+    lib_type, form = kinds.note_type(note_type)
     minutes = "" if note_type == "book" else (entry.get("reading_time") or "")
     authors = split_authors(entry.get("author", "")) or [
         a for a in (re.sub(r"[\[\]|#^]", "", str(x)).strip() for x in authors or []) if a]
@@ -172,13 +174,14 @@ def render_note(entry: dict, thought: str, now: datetime, people_folder: str, tz
         *[f"  - {q(f'[[{people_folder}/{a}|{a}]]')}" for a in authors],
         f"published: {props['published']}",
         f"date-added: {now.isoformat(timespec='seconds')}",
-        f"type: {note_type}",
+        f"type: {lib_type}",
+        f"form: {form}".rstrip(),
         f"minutes: {minutes}",
         f"description: {q(description) if description else ''}",
         "tags:",
         "  - clippings",
-        f"  - {note_type}",
-        "archive:",
+        f"  - {lib_type}",
+        "date-archived:",
         "---",
         "",
         "## Notes",

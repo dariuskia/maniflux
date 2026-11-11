@@ -5,6 +5,18 @@ from urllib.parse import urlsplit
 
 TYPES = ["article", "video", "podcast", "paper", "music", "thread", "book", "other"]
 
+# The kinds above decide ranking, rules and tabs. Saved notes use the library types and an optional
+# form (see library/README.md; the same mapping as Link Ingest's NOTE_TYPE).
+NOTE_TYPE = {
+    "article": ("writing", ""), "paper": ("research", "paper"), "thread": ("writing", "thread"),
+    "video": ("video", ""), "podcast": ("podcast", "episode"), "music": ("music", ""),
+    "book": ("book", ""), "other": ("project", ""),
+}
+
+
+def note_type(kind: str) -> tuple[str, str]:
+    return NOTE_TYPE.get(kind, ("writing", ""))
+
 
 def _host(url: str) -> str:
     try:

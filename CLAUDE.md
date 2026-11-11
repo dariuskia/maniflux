@@ -9,6 +9,7 @@ Darius's local, self-hosted system for following and triaging content (newslette
 - `kill-the-newsletter/`: scripts for the self-hosted Kill the Newsletter server (Hetzner) that turns email newsletters into feeds.
 - `docs/BRIEF.md`: the Maniflux brief: scope, features, Miniflux API calls, Obsidian note format, data, stack, decisions. **Read this before working on Maniflux.**
 - `docs/SETUP-NOTES.md`: what's running, past decisions, what's not started. Private: it's in `.gitignore`, so keep server addresses and other personal details there, not in tracked files.
+- `library/`: the vault's library (`content/`): the note format (types, `form`, `date-archived`, IDs) and shared code for writing and fixing notes. See `library/README.md`.
 - `obsidian/`: reference copies of the QuickAdd scripts and Datacore dashboard in the vault. Maniflux must write notes in the format they expect.
 
 ## Current task: build Maniflux version one
