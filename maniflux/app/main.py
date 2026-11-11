@@ -328,7 +328,8 @@ async def save(request: Request, entry_id: int, thought: str = Form(""), back: s
                    "thought": thought, "title": entry.get("title") or "",
                    "creators": split_authors(entry.get("author", "")),
                    "published": published_day(entry, config.TZ), "minutes": entry.get("reading_time") or None,
-                   "text": text_body[:20000], "date_added": now().isoformat(timespec="seconds")}
+                   "text": text_body[:20000], "date_added": now().isoformat(timespec="seconds"),
+                   "relink": True}  # if the library already has it under another link spelling, link that again
             path = ""
             try:
                 answer = await request.app.state.library.save(job)

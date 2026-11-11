@@ -55,13 +55,25 @@ def clean_url(raw: str) -> str:
     return urlunsplit((u.scheme, u.netloc, u.path, urlencode(q), u.fragment))
 
 
+# Parts of an address that don't change which page it is: a start time, where the link was shared from, tracking
+_NOT_THE_PAGE = {"t", "start", "feature", "ref", "ref_src", "source", "si", "igshid", "fbclid", "gclid",
+                 "mc_cid", "mc_eid", "share", "context", "pp"}
+
+
 def url_key(url: str) -> str:
-    """Two links to the same page give the same key (no scheme, www, trailing slash or tracking)."""
+    """Two links to the same page give the same key: no scheme, www, trailing slash, tracking or share
+    bits. Any YouTube link becomes its video, and Spotify links drop their country (/intl-de/)."""
+    from library import youtube_id
+    if vid := youtube_id(url):
+        return f"youtube:{vid}"
     u = urlsplit(clean_url(url))
-    host = re.sub(r"^(www|m)\.", "", (u.hostname or "").lower())
+    host_ = re.sub(r"^(www|m)\.", "", (u.hostname or "").lower())
     path = u.path.rstrip("/") or "/"
-    query = "&".join(sorted(f"{k}={v}" for k, v in parse_qsl(u.query)))
-    return f"{host}{path}" + (f"?{query}" if query else "")
+    if host_ == "open.spotify.com":
+        path = re.sub(r"^/intl-[^/]+", "", path)
+    query = "&".join(sorted(f"{k}={v}" for k, v in parse_qsl(u.query)
+                            if k.lower() not in _NOT_THE_PAGE and not k.lower().startswith("utm_")))
+    return f"{host_}{path}" + (f"?{query}" if query else "")
 
 
 def host(url: str) -> str:
