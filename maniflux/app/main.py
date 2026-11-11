@@ -324,7 +324,7 @@ async def save(request: Request, entry_id: int, thought: str = Form(""), back: s
             # The library service works out the note (type, description, cover...) in the background,
             # so saving doesn't wait for it. If it can't be reached, a pending note waits for it instead.
             text_body = full_text(entry.get("content", ""))
-            job = {"url": entry["url"], "source": (entry.get("feed") or {}).get("title") or "", "via": "reader",
+            job = {"url": entry["url"], "source": (entry.get("feed") or {}).get("title") or "",
                    "thought": thought, "title": entry.get("title") or "",
                    "creators": split_authors(entry.get("author", "")),
                    "published": published_day(entry, config.TZ), "minutes": entry.get("reading_time") or None,

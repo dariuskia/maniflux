@@ -169,7 +169,6 @@ def render_note(entry: dict, thought: str, now: datetime, people_folder: str, tz
         f"title: {q(props['title'])}",
         f"url: {q(props['url'])}",
         f"source: {q(props['source']) if props['source'] else ''}",
-        "via: reader",
         "creators:",
         *[f"  - {q(f'[[{people_folder}/{a}|{a}]]')}" for a in authors],
         f"published: {props['published']}",

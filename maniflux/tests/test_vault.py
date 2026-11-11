@@ -26,7 +26,7 @@ def test_note_format():
     assert fm["title"] == "Why Politics Has Become So Frenzied"
     assert fm["url"] == "https://www.theatlantic.com/x?id=3"
     assert fm["source"] == "The Atlantic"
-    assert fm["via"] == "reader"
+    assert "via" not in fm  # via is the outlet now, worked out by the library service
     assert fm["creators"] == ["[[people/Jane Doe|Jane Doe]]", "[[people/John Roe|John Roe]]"]
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", fm["published"])
     assert fm["date-added"] == "2026-10-30T12:00:00-07:00"

@@ -22,6 +22,7 @@ FEED_DIR = Path(__file__).resolve().parent.parent
 VAULT = Path(os.environ.get("VAULT_PATH", Path.home() / "Documents" / "Obsidian Vault"))
 NOTES_DIR = "content"  # the vault folder the library lives in
 PEOPLE_DIR = "people"
+ORGS_DIR = "orgs"  # organisations: publications, companies, labels, stations, publishers
 UA = {"User-Agent": "library-notes/1.0 (https://github.com/dariuskia/maniflux; personal Obsidian vault script)"}
 # Characters Obsidian doesn't allow in file names, or that break links
 _BAD_NAME = re.compile(r'[\\/:*?"<>|#^\[\]]')
@@ -309,6 +310,10 @@ def file_name(short_title: str, creators: list[str]) -> str:
 
 def person_link(name: str) -> str:
     return f"[[{PEOPLE_DIR}/{name}|{name}]]"
+
+
+def org_link(name: str) -> str:
+    return f"[[{ORGS_DIR}/{name}|{name}]]"
 
 
 def _yaml_value(v: str) -> str:

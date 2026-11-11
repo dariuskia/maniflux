@@ -55,7 +55,7 @@ def test_save_hands_the_item_to_the_library_service(client, fake, ai, library):
     # the note itself is written by the library service, in the background
     assert not list(client.content_dir.glob("*.md"))
     job = library.jobs[0]
-    assert job["url"] == fake.entries[3]["url"] and job["thought"] == "worth a look" and job["via"] == "reader"
+    assert job["url"] == fake.entries[3]["url"] and job["thought"] == "worth a look" and "via" not in job
     assert job["title"] == "Housing is too expensive" and job["source"] == "Example Feed"
     assert "About housing costs." in job["text"] and job["date_added"]
     assert ai.prompts == []  # no waiting on the model while saving

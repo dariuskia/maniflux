@@ -52,7 +52,6 @@ def log(msg: str) -> None:
 class Save(BaseModel):
     url: str
     source: str = ""
-    via: str = "link ingest"
     date_added: str = ""
     thought: str = ""  # Maniflux: what you wrote when saving
     relink: bool = False  # if it's already saved, link it in the journal again (Maniflux; Link Ingest does it itself)
@@ -92,8 +91,7 @@ def save_direct(job: dict) -> None:
         relink(dup, day)
         log(f"already saved as {dup.name} ({why}); linked again for {day}")
         return
-    props = fill.props_for(note, source=job.get("source", ""), via=job.get("via", "link ingest"),
-                           date_added=job.get("date_added") or now_iso())
+    props = fill.props_for(note, source=job.get("source", ""), date_added=job.get("date_added") or now_iso())
     body = "\n" + (job["thought"].strip() + "\n" if job.get("thought", "").strip() else "")
     path = fill.free_name(FOLDER, note["title"])
     with open(path, "x", encoding="utf-8") as f:  # never overwrites
@@ -119,6 +117,9 @@ def finish_pending(path: Path) -> None:
                # The page as you saw it (the Web Clipper's {{content}}, past any paywall): read instead of the page
                "text": str(fm.get("clip-text") or "")[:20000],
                "category": fm.get("yt-category", ""),
+               # A publication the clip named (e.g. the Web Clipper's {{site}}), unless it's an old tool name
+               "via_hint": "" if str(fm.get("via") or "").strip().lower() in fill.TOOL_NAMES
+               else L.link_target(str(fm.get("via") or "")),
                # Authors the clip already read off the page (the Web Clipper's {{author}})
                "creators": [L.link_target(c) for c in (lambda v: v if isinstance(v, list) else [v])(
                    fm.get("creators") or fm.get("author") or []) if c and str(c).strip()]}
@@ -132,8 +133,7 @@ def finish_pending(path: Path) -> None:
         new = L.set_props(before, {"status": "duplicate", "duplicate-of": f"[[{dup.stem}]]"}, remove=("clip-text",))
         log(f"{path.name} is already saved as {dup.name} ({why}); Process New Clips will merge it")
     else:
-        props = fill.props_for(note, source=fm.get("source", ""), via=fm.get("via") or "clip",
-                               date_added=fm.get("date-added") or now_iso())
+        props = fill.props_for(note, source=fm.get("source", ""), date_added=fm.get("date-added") or now_iso())
         props["date-archived"] = fm.get("date-archived", "")  # never undo an archive
         new = L.set_props(before, props, remove=("author", "yt-channel", "yt-category", "clip-text"),
                           in_place_of={"creators": "author"})
@@ -178,7 +178,7 @@ async def worker() -> None:
 def write_pending(job: dict) -> None:
     """A bare note the service will finish later (after a failed try)."""
     props = {"title": job.get("title") or fill.host(job["url"]), "url": fill.clean_url(job["url"]),
-             "source": job.get("source", ""), "via": job.get("via", "link ingest"),
+             "source": job.get("source", ""),
              "date-added": job.get("date_added") or now_iso(), "status": "pending"}
     if job.get("channel"):
         props["yt-channel"] = job["channel"]

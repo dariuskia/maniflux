@@ -37,6 +37,12 @@ FORMS = {
     "podcast": ["episode"],
     "film": ["documentary", "short"],
 }
+# Where things are hosted, which is never their "via" (the outlet that put them out)
+PLATFORMS = {"youtube", "substack", "spotify", "soundcloud", "bandcamp", "apple podcasts", "arxiv", "medium", "x",
+             "twitter", "instagram", "vimeo", "mixcloud", "google", "github", "linkedin", "tiktok", "reddit"}
+# Old values of via (which tool saved a note), from before via meant the outlet
+TOOL_NAMES = {"clip", "reader", "link ingest", "web clipper", "maniflux", "linkingest"}
+
 # Types whose facts come from the databases, and types that only get a cover
 LOOKED_UP = {"book", "film", "show", "music"}
 COVERED = LOOKED_UP | {"video", "podcast"}
@@ -190,11 +196,18 @@ def ask_model_once(url: str, meta: dict, forced: str | None) -> dict:
     minutes. (Not the title: that's the page's own.)"""
     prompt = "\n".join([
         "You are filing a link in a personal reading log. Using the page data below, reply with only a JSON object with these keys:",
+        '- "title": "" unless the metadata title below is empty; only then, a short title for it',
         f'- "type": one of {", ".join(KINDS)} (essays and blog posts count as article)'
         + (f" (it is a {forced})" if forced else ""),
         '- "authors": array of the people who made it or are its subject. For music: the artists or DJs performing, '
         "not the channel, station or label that posted it. For an interview: the person interviewed, then the "
-        "interviewer if named. Use an organization only if no person is involved; [] if unknown",
+        "interviewer if named. People only; [] if no person is named",
+        '- "organisations": array of the organisations that made it, only if no person is named (a report credited '
+        'to a company, an article by several organisations with no author); otherwise []',
+        '- "via": the organisation or outlet that put it out: the publication, the company (for its own blog), the '
+        "newsletter, podcast, YouTube channel, radio station, record label or publishing house. Never the platform it "
+        "is hosted on (YouTube, Substack, Spotify, SoundCloud, Bandcamp, Apple Podcasts, arXiv, Medium, X, Instagram). "
+        '"" if unclear',
         '- "is_music": true if this is music to listen to: a DJ set, mix, radio show, live performance, session, music '
         "video, album or track. A video where the artist plays or performs music counts, even with talking in between. "
         "false if it is mainly about something (an interview without performance, a talk, review or documentary), "
@@ -210,6 +223,7 @@ def ask_model_once(url: str, meta: dict, forced: str | None) -> dict:
         f"Metadata title: {meta.get('title', '')}",
         f"Metadata authors: {', '.join(meta.get('authors') or [])}",
         *([f"Channel that posted it: {meta['channel']}"] if meta.get("channel") else []),
+        *([f"Publication named when it was saved: {meta['via_hint']}"] if meta.get("via_hint") else []),
         *([f"Category chosen by the uploader: {meta['category']}"] if meta.get("category") else []),
         f"Metadata published: {meta.get('published', '')}",
         f"Metadata description: {meta.get('description', '')}",
@@ -261,7 +275,8 @@ def work_out(job: dict) -> dict:
     meta = {"title": job.get("title") or "", "site": host(url), "description": job.get("description") or "",
             "published": job.get("published") or "", "authors": clean_names(job.get("creators")),
             "text": job.get("text") or "", "words": len((job.get("text") or "").split()),
-            "channel": job.get("channel") or "", "category": job.get("category") or ""}
+            "channel": job.get("channel") or "", "category": job.get("category") or "",
+            "via_hint": job.get("via_hint") or ""}
     if not meta["text"] and not L.youtube_id(url):
         # Maniflux sends the article's text; otherwise read the page (YouTube won't show it to the server)
         page = gather(url)
@@ -278,14 +293,22 @@ def work_out(job: dict) -> dict:
     ai_form = str(ai.get("form") or "").lower().strip()
     form = ai_form if ai_form in FORMS.get(lib_type, []) else rule_form
 
-    creators = clean_names(ai.get("authors")) or meta["authors"] or ([meta["channel"]] if meta["channel"] else [])
+    # Creators are people whenever anyone is named; organisations only when no person is
+    people = clean_names(ai.get("authors")) or meta["authors"]
+    orgs = [] if people else clean_names(ai.get("organisations"))
+    creators = people or orgs
+    via = re.sub(r"\s+", " ", str(ai.get("via") or "")).strip()
+    if via.lower() in PLATFORMS:
+        via = ""
     # The title the save brought (Maniflux's item, YouTube's, the Web Clipper's), else the page's own as
     # the browser tab shows it, else its preview title, else the address. A site-name placeholder from
     # an offline save doesn't count.
     given = (job.get("title") or "").strip()
     if given in (host(url), "Untitled"):
         given = ""
-    title = re.sub(r"\s+", " ", given or meta.get("page_title") or meta["title"] or url).strip()
+    # (the model's title only when the page couldn't be read and gave none)
+    title = re.sub(r"\s+", " ", given or meta.get("page_title") or meta["title"] or str(ai.get("title") or "")
+                   or url).strip()
     title = re.sub("[\u200b-\u200f\u202a-\u202e\ufeff]", "", title)  # invisible marks (Letterboxd starts with one)
     minutes = job.get("minutes") or None
     if not minutes and lib_type == "writing" and meta["words"] > 150:
@@ -294,7 +317,8 @@ def work_out(job: dict) -> dict:
         minutes = round(float(ai["minutes"]))
     if lib_type == "book":
         minutes = None
-    out = {"url": url, "title": title, "creators": creators, "type": lib_type, "form": form,
+    out = {"url": url, "title": title, "creators": creators, "org_creators": orgs, "via": via,
+           "type": lib_type, "form": form,
            "description": re.sub(r"\s+", " ", str(ai.get("description") or meta["description"] or "")).strip(),
            "published": to_date(ai.get("published")) or to_date(meta["published"]), "minutes": minutes or ""}
 
@@ -374,10 +398,17 @@ class Index:
 
 # ---------- writing ----------
 
-def props_for(note: dict, *, source: str, via: str, date_added: str) -> dict:
-    """The finished note's properties, in the usual order."""
-    props = {"title": note["title"], "url": note["url"], "source": source, "via": via,
-             "creators": [L.person_link(c) for c in note["creators"]], "published": note.get("published", ""),
+def creator_links(note: dict) -> list[str]:
+    orgs = set(note.get("org_creators") or [])
+    return [L.org_link(c) if c in orgs else L.person_link(c) for c in note["creators"]]
+
+
+def props_for(note: dict, *, source: str, date_added: str) -> dict:
+    """The finished note's properties, in the usual order. source: how it reached you. via: the
+    organisation or outlet that put it out."""
+    props = {"title": note["title"], "url": note["url"], "source": source,
+             "creators": creator_links(note), "via": L.org_link(note["via"]) if note.get("via") else "",
+             "published": note.get("published", ""),
              "date-added": date_added, "type": note["type"], "form": note.get("form", ""),
              "minutes": str(note.get("minutes") or ""), "description": note.get("description", "")}
     for k in ("year", "cover", *L_IDS):

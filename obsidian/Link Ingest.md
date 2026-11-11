@@ -60,7 +60,7 @@ async function start(params, settings) {
   if (existing) return linkExisting(existing);
 
   // 3. YouTube's details, read here (the server can't): title, channel, category, length, description
-  const job = { url, source, via: "link ingest", date_added: moment().format() };
+  const job = { url, source, date_added: moment().format() };
   if (isYouTube(url)) {
     const meta = await gatherYouTube(url, requestUrl);
     Object.assign(job, {
@@ -102,7 +102,6 @@ async function start(params, settings) {
     `title: ${q(title)}`,
     `url: ${q(url)}`,
     `source: ${source ? q(source) : ""}`,
-    "via: link ingest",
     `date-added: ${job.date_added}`,
     ...(job.minutes ? [`minutes: ${job.minutes}`] : []),
     ...(job.channel ? [`yt-channel: ${q(job.channel)}`] : []),
