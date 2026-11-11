@@ -151,7 +151,9 @@ def gather(url: str) -> dict:
     })
     for t in doc(["script", "style", "noscript", "nav", "header", "footer", "aside", "form", "svg", "iframe"]):
         t.decompose()
-    root = doc.find("article") or doc.find("main") or doc.body
+    # One <article> is the piece itself; several mean a list (an author page, a front page): read it all
+    articles = doc.find_all("article")
+    root = (articles[0] if len(articles) == 1 else None) or doc.find("main") or doc.body
     text = re.sub(r"\s+", " ", root.get_text(" ") if root else "").strip()
     meta["words"] = len(text.split()) if text else 0
     meta["text"] = text[:TEXT_LIMIT]
@@ -161,11 +163,19 @@ def gather(url: str) -> dict:
 # ---------- the LLM ----------
 
 def ask_model(url: str, meta: dict, forced: str | None) -> dict:
+    """ask_model_once, tried a second time if the model's answer can't be read."""
+    try:
+        return ask_model_once(url, meta, forced)
+    except ValueError:
+        return ask_model_once(url, meta, forced)
+
+
+def ask_model_once(url: str, meta: dict, forced: str | None) -> dict:
     """The model's view of what the link is: title, kind, authors, is_music, form, description,
     published, minutes. The same instructions Link Ingest used."""
     prompt = "\n".join([
         "You are filing a link in a personal reading log. Using the page data below, reply with only a JSON object with these keys:",
-        '- "title": the title of the content, without site-name suffixes',
+        '- "title": the page\'s own metadata title, with only the site name taken off (e.g. "Ananda Kalukin – tjTODAY" becomes "Ananda Kalukin"). Write your own only if the metadata title is missing or is just the site name',
         f'- "type": one of {", ".join(KINDS)} (essays and blog posts count as article)'
         + (f" (it is a {forced})" if forced else ""),
         '- "authors": array of the people who made it or are its subject. For music: the artists or DJs performing, '
