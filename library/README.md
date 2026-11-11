@@ -66,6 +66,8 @@ Link Ingest and Maniflux recognise film and book links (Letterboxd and IMDb film
 
 `Check out next.base` in the vault: cover cards of everything not archived yet, with views for films and shows, books, music, and videos and podcasts, plus a table of everything grouped by type. Archive something by filling in its `date-archived`.
 
+`Archive.base`: everything archived, newest first: a table of recently archived items, cover cards for films and shows, books, music, and videos and podcasts, a table of writing and research, and everything grouped by type.
+
 ## Code
 
 - `enrich.py`: the library service (above). `Dockerfile` runs it on the server.
