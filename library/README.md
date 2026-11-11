@@ -9,7 +9,7 @@ Everything saved in the Obsidian vault's `content/` folder (articles, papers, bo
 title: Close-Up
 url: https://letterboxd.com/film/close-up/
 source: "tyler cowen mentioned"      # where you heard of it (optional)
-creators:                             # or author:, on notes saved as clips
+creators:                             # who made it: authors, directors, artists
   - "[[people/Abbas Kiarostami|Abbas Kiarostami]]"
 year: 1990
 date-added: 2026-10-22T13:40:28-07:00
@@ -44,7 +44,7 @@ Writing about music, film or art is still `writing`; it connects to the work thr
 
 **Archiving:** `date-archived` is the date you first archived something, and stays the same if you archive it again. Empty means not archived yet. Things imported from other platforms come in archived, with the platform's date (when you liked it, watched it, read it), or the import date if there isn't one.
 
-**Creators** are links into `people/` (one note per person, whatever they make). Bands, labels, studios, publishers and venues will go in their own folder when the first ones arrive.
+**Creators** (`creators`, on every note, for writing as much as films and music) are links into `people/` (one note per person, whatever they make). Bands, labels, studios, publishers and venues will go in their own folder when the first ones arrive.
 
 **IDs** come from Open Library, Wikidata and MusicBrainz (later also TMDB and Spotify). They're how a later import finds an existing note instead of making a duplicate, and how a person who makes both music and films ends up as one note.
 
@@ -54,7 +54,7 @@ Writing about music, film or art is still `writing`; it connects to the work thr
 
 The Web Clipper, Link Ingest and Maniflux only know what the page said. The **library service** on the personal server (`enrich.py --watch`, in Docker next to Maniflux) checks `content/` every 5 minutes for book, film, show and music notes with no database ID yet, and fills in:
 
-- `creators` in place of `author` (same links)
+- `creators` in place of `author`, if a note still has the old name (from an old Web Clipper template)
 - `year`, `cover`, and IDs from Open Library, Wikidata or MusicBrainz, plus `form` for music (album, EP, track)
 - a tidy `title`, but only when a database confirms the match. Otherwise the title stays as saved.
 

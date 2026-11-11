@@ -75,7 +75,7 @@ title: "Why Politics Has Become So Frenzied"
 url: "https://…"
 source: "The Atlantic"
 via: reader
-author:
+creators:
   - "[[people/Jane Doe|Jane Doe]]"
 published: 2026-10-27
 date-added: 2026-10-30T12:00:00-07:00

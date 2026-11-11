@@ -27,7 +27,7 @@ def test_note_format():
     assert fm["url"] == "https://www.theatlantic.com/x?id=3"
     assert fm["source"] == "The Atlantic"
     assert fm["via"] == "reader"
-    assert fm["author"] == ["[[people/Jane Doe|Jane Doe]]", "[[people/John Roe|John Roe]]"]
+    assert fm["creators"] == ["[[people/Jane Doe|Jane Doe]]", "[[people/John Roe|John Roe]]"]
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", fm["published"])
     assert fm["date-added"] == "2026-10-30T12:00:00-07:00"
     assert fm["type"] == "writing" and fm["form"] is None  # an article is writing, with no form
@@ -44,7 +44,7 @@ def test_empty_fields_and_books():
     e = make_entry(1, 'Quotes "and" colons: a [test] #1', author="", reading_time=7)
     fm = read_frontmatter(note(e, note_type="book", description=""))
     assert fm["title"] == 'Quotes "and" colons: a [test] #1'
-    assert fm["author"] is None and fm["description"] is None
+    assert fm["creators"] is None and fm["description"] is None
     assert fm["minutes"] is None  # books don't get a length
     assert safe_file_name(e["title"]) == "Quotes and colons a test 1"
     assert note(e).endswith("## Notes\n\n")
@@ -99,14 +99,14 @@ def test_email_authors_are_not_names():
     assert clean_author("Jane Doe") == "Jane Doe"
     e = make_entry(1, author="dariuskianersi+caf_=x=news.example.com@gmail.com")
     fm = read_frontmatter(note(e))
-    assert fm["author"] is None
+    assert fm["creators"] is None
     fm = read_frontmatter(render_note(e, "", NOW, "people", TZ, note_type="article", description="d",
                                       authors=["Resident Advisor", "[[x]]"]))
-    assert fm["author"] == ["[[people/Resident Advisor|Resident Advisor]]", "[[people/x|x]]"]
+    assert fm["creators"] == ["[[people/Resident Advisor|Resident Advisor]]", "[[people/x|x]]"]
     # a real author from the feed wins over the model's
     fm = read_frontmatter(render_note(make_entry(2, author="Jane Doe"), "", NOW, "people", TZ,
                                       note_type="article", description="d", authors=["Someone Else"]))
-    assert fm["author"] == ["[[people/Jane Doe|Jane Doe]]"]
+    assert fm["creators"] == ["[[people/Jane Doe|Jane Doe]]"]
 
 
 def test_kinds_become_library_types():

@@ -164,7 +164,7 @@ function RandomPick({ rows }) {
         <div>
           <h3><dc.Link link={pick.$link} /></h3>
           <p>
-            {[get(pick, "type"), minutes(pick) ? `${minutes(pick)} min` : null, asList(get(pick, "author")).map(nameOf).join(", ")]
+            {[get(pick, "type"), minutes(pick) ? `${minutes(pick)} min` : null, asList(get(pick, "creators")).map(nameOf).join(", ")]
               .filter(Boolean)
               .join(" · ")}
           </p>

@@ -319,7 +319,7 @@ def test_newsletter_save_asks_model_for_author(client, fake, ai):
     fake.entries[1]["author"] = "me+caf_=abc=news.example.com@gmail.com"
     client.post("/e/1/save", headers=HX)
     fm = read_frontmatter(next(client.content_dir.glob("*.md")).read_text())
-    assert fm["author"] == ["[[people/Resident Advisor|Resident Advisor]]"]
+    assert fm["creators"] == ["[[people/Resident Advisor|Resident Advisor]]"]
     assert '"authors":' in ai.prompts[-1] and "caf_" not in ai.prompts[-1]
     # a real author: not asked
     client.post("/e/3/save", headers=HX)
