@@ -1,4 +1,4 @@
-QuickAdd user script: paste or share a link, say where you found it, and the library service on the personal server turns it into a finished note in `content/` (type, creators, description, cover, IDs; duplicates caught), in the background. Saving doesn't wait for that: the note appears, and Process New Clips links it in the journal, once it's ready. If the link is already saved, this links the existing note under today's header at once. If the server can't be reached (offline, or Tailscale off), it leaves a pending note that the server fills in later. YouTube's page is read here, on the device, because YouTube won't show it to the server. QuickAdd runs the first js block below; this text is ignored.
+QuickAdd user script: paste or share a link, say where you found it, and the library service on the personal server turns it into a finished note in `content/` (type, creators, description, cover, IDs; duplicates caught), in the background. Saving doesn't wait for that: the note appears, and Process New Clips links it in the journal, once it's ready. If the link is already saved, this links the existing note under today's header at once. If the server can't be reached (offline, or Tailscale off), nothing is saved and it says so: paste the link in the journal for now and save it once you're back online. YouTube's page is read here, on the device, because YouTube won't show it to the server. QuickAdd runs the first js block below; this text is ignored.
 
 ```js
 module.exports = {
@@ -69,55 +69,37 @@ async function start(params, settings) {
     });
   }
 
-  // 4. Hand it to the library service; it answers at once
+  // 4. Hand it to the library service; it answers at once. If it can't be reached, nothing is saved:
+  //    paste the link in the journal for now, and save it once you're back online.
   const base = (settings["Library URL"] || "").replace(/\/+$/, "");
   const token = settings["Library Token"] || "";
-  if (base && token) {
-    try {
-      const res = await requestUrl({
-        url: `${base}/save`, method: "POST", contentType: "application/json",
-        headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(job), throw: false,
-      });
-      if (res.status === 200) {
-        if (res.json?.status === "exists") {
-          const file = app.metadataCache.getFirstLinkpathDest(String(res.json.note || ""), "");
-          if (file) return linkExisting(file);
-          new Notice(`Already saved as ${res.json.note}`);
-          return;
-        }
-        new Notice("Saved. It'll appear in the journal once it's filled in.");
-        return;
-      }
-      console.warn("Link Ingest: library service answered", res.status, res.text?.slice(0, 200));
-    } catch (e) {
-      console.warn("Link Ingest: library service unreachable", e);
-    }
+  if (!base || !token) {
+    new Notice("Not saved: set the Library URL and Token in Link Ingest's settings.", 10000);
+    return;
   }
-
-  // 5. The server is out of reach: leave a pending note for it to fill in later
-  const q = (s) => JSON.stringify(String(s));
-  const title = clean(job.title || host(url) || url);
-  const fm = [
-    "---",
-    `title: ${q(title)}`,
-    `url: ${q(url)}`,
-    `source: ${source ? q(source) : ""}`,
-    `date-added: ${job.date_added}`,
-    ...(job.minutes ? [`minutes: ${job.minutes}`] : []),
-    ...(job.channel ? [`yt-channel: ${q(job.channel)}`] : []),
-    ...(job.category ? [`yt-category: ${q(job.category)}`] : []),
-    "status: pending",
-    "---",
-    "",
-  ].join("\n");
-  if (!app.vault.getAbstractFileByPath(folder)) await app.vault.createFolder(folder);
-  const base2 = safeFileName(title) || "Untitled";
-  let path = `${folder}/${base2}.md`;
-  for (let n = 2; app.vault.getAbstractFileByPath(path); n++) path = `${folder}/${base2} (${n}).md`;
-  await app.vault.create(path, fm);
-  new Notice(base && token
-    ? "Saved for later: the server couldn't be reached, so it'll be filled in once it can."
-    : "Saved for later: set the Library URL and Token in Link Ingest's settings so notes get filled in.", 8000);
+  let res;
+  try {
+    res = await requestUrl({
+      url: `${base}/save`, method: "POST", contentType: "application/json",
+      headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(job), throw: false,
+    });
+  } catch (e) {
+    console.warn("Link Ingest: library service unreachable", e);
+    new Notice("Not saved: can't reach the library service. Are you online, with Tailscale on? Save it again once you are.", 10000);
+    return;
+  }
+  if (res.status !== 200) {
+    console.warn("Link Ingest: library service answered", res.status, res.text?.slice(0, 200));
+    new Notice(`Not saved: the library service answered ${res.status}${res.status === 401 ? " (check the token)" : ""}.`, 10000);
+    return;
+  }
+  if (res.json?.status === "exists") {
+    const file = app.metadataCache.getFirstLinkpathDest(String(res.json.note || ""), "");
+    if (file) return linkExisting(file);
+    new Notice(`Already saved as ${res.json.note}`);
+    return;
+  }
+  new Notice("Saved. It'll appear in the journal once it's filled in.");
 }
 
 async function addToJournal(app, TFile, journalPath, link, today) {
@@ -225,7 +207,4 @@ function clean(s) {
   return String(s || "").replace(/\s+/g, " ").trim();
 }
 
-function safeFileName(s) {
-  return String(s || "").replace(/[\\/:*?"<>|#^\[\]]/g, "").replace(/\s+/g, " ").trim().slice(0, 120);
-}
 ```

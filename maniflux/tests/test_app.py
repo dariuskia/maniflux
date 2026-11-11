@@ -61,16 +61,15 @@ def test_save_hands_the_item_to_the_library_service(client, fake, ai, library):
     assert ai.prompts == []  # no waiting on the model while saving
 
 
-def test_save_when_the_library_service_is_down_leaves_a_pending_note(client, fake, library):
-    from app.vault import read_frontmatter
+def test_save_when_the_library_service_is_down_saves_nothing_and_keeps_the_card(client, fake, library):
     library.down = True
     r = client.post("/e/3/save", data={"thought": "worth a look"}, headers=HX)
-    assert "Saved to Obsidian: Housing is too expensive.md" in r.text and "library service is back" in r.text
-    note = next(client.content_dir.glob("*.md"))
-    fm = read_frontmatter(note.read_text())
-    assert fm["status"] == "pending" and fm["url"] == fake.entries[3]["url"] and "worth a look" in note.read_text()
-    assert fake.entries[3]["status"] == "read"
-
+    assert 'class="card"' in r.text and "Not saved" in r.text
+    assert not list(client.content_dir.glob("*.md"))
+    assert fake.entries[3]["status"] == "unread"
+    library.down = False
+    r = client.post("/e/3/save", headers=HX)
+    assert "Saved to Obsidian" in r.text and fake.entries[3]["status"] == "read"
 
 def test_save_of_something_already_saved(client, fake, library):
     library.exists[fake.entries[3]["url"]] = "Housing"

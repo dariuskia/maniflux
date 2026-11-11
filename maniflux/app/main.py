@@ -24,7 +24,7 @@ from .miniflux import Miniflux, MinifluxError
 from .ranking import SHOW, Item, budget_set, rank, rule_is_live, search, shown_by
 from .search import ArchiveIndex
 from .text import clean_author, full_text, parse_time
-from .vault import VaultIndex, published_day, render_note, split_authors, write_note
+from .vault import VaultIndex, published_day, split_authors
 
 log = logging.getLogger("maniflux")
 HERE = Path(__file__).parent
@@ -322,7 +322,7 @@ async def save(request: Request, entry_id: int, thought: str = Form(""), back: s
                 text = f"Already in Obsidian: {existing.name}"
         else:
             # The library service works out the note (type, description, cover...) in the background,
-            # so saving doesn't wait for it. If it can't be reached, a pending note waits for it instead.
+            # so saving doesn't wait for it. If it can't be reached, nothing is saved and the card stays.
             text_body = full_text(entry.get("content", ""))
             job = {"url": entry["url"], "source": (entry.get("feed") or {}).get("title") or "",
                    "thought": thought, "title": entry.get("title") or "",
@@ -330,24 +330,16 @@ async def save(request: Request, entry_id: int, thought: str = Form(""), back: s
                    "published": published_day(entry, config.TZ), "minutes": entry.get("reading_time") or None,
                    "text": text_body[:20000], "date_added": now().isoformat(timespec="seconds"),
                    "relink": True}  # if the library already has it under another link spelling, link that again
-            path = ""
             try:
                 answer = await request.app.state.library.save(job)
-                if answer.get("status") == "exists":
-                    text = f"Already in Obsidian: {answer.get('note')}.md"
-                else:
-                    text = "Saved to Obsidian"
-            except LibraryError:
-                short = len(text_body.split()) < config.SHORT_TEXT_WORDS
-                body = render_note(entry, thought, now(), config.PEOPLE_FOLDER, config.TZ,
-                                   note_type=kinds.known_type(entry) or "article",
-                                   description=" ".join(text_body.split()) if short else "", status="pending")
-                try:
-                    written = await run_in_threadpool(write_note, config.CONTENT_DIR, entry, body)
-                except OSError as e:
-                    return _save_reply(request, entry, f"Couldn't write the note: {e.strerror or e}", error=True, back=back)
-                path = str(written.relative_to(config.CONTENT_DIR))
-                text = f"Saved to Obsidian: {written.name} (filled in once the library service is back)"
+            except LibraryError as e:
+                msg = f"Not saved: {e}. Try again in a moment."
+                if not is_htmx(request):
+                    return _back(msg, back)
+                return card(request, rank([entry], db.steering(), now())[0], error=msg)
+            text = (f"Already in Obsidian: {answer.get('note')}.md" if answer.get("status") == "exists"
+                    else "Saved to Obsidian")
+            path = ""
             db.add_saved(entry_id, entry["url"], path)
             db.feedback(entry, "save")
 

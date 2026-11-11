@@ -91,7 +91,7 @@ date-archived:
 
 - `source` is the feed it came through; `via` is the outlet that published it.
 - Maniflux sends the item's text, so the library service needn't fetch the page; it writes the description, type and the rest from it.
-- Saving doesn't wait for the model: the card leaves at once. If the library service is down, Maniflux writes a `status: pending` note that the service finishes later.
+- Saving doesn't wait for the model: the card leaves at once. If the library service can't be reached, nothing is saved and the card stays, so the save can be tried again.
 - Process New Clips (a QuickAdd macro on the Mac) then links the note at the top of that day's journal entry, below the tasks, once it's ready. It does the same for notes from the Web Clipper and Link Ingest.
 
 Notes keep the link, the description and your notes; the item text isn't stored.
@@ -125,7 +125,7 @@ Feedback is recorded from day one even though version one barely uses it: it bec
 Python with FastAPI, SQLite and server-rendered HTML with htmx, run as one more service in `docker-compose.yml`.
 
 - **Address:** `http://127.0.0.1:8090` on the Mac; the phone reaches it through Tailscale.
-- **Vault access:** the vault's `content/` folder is mounted into the container so the reader can check for notes already saved (and write a pending note if the library service is down).
+- **Vault access:** the vault's `content/` folder is mounted into the container so the reader can check for notes already saved.
 - **Settings in `.env`:** Miniflux API key, path to the vault's `content/` folder, OpenRouter key for digests (and optionally `OPENROUTER_MODEL`), and `LIBRARY_TOKEN` for the library service.
 - **No frontend build step:** pages are HTML from the server, with htmx for buttons, so changes are quick to make and test.
 

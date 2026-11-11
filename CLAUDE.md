@@ -19,7 +19,7 @@ Built from `docs/BRIEF.md` (read it before changing Maniflux). Key points:
 - Python (FastAPI) + SQLite + server-rendered HTML with htmx. No frontend build step.
 - Reaches Miniflux at `http://miniflux:8080/v1` with `MINIFLUX_API_KEY` in the `X-Auth-Token` header; served on `127.0.0.1:8090`.
 - Thin design: never copy entries; read them live from Miniflux. SQLite holds only scores, weights, rules, feedback, saved-note paths and state.
-- Save hands the item (with its text and your thought) to the library service and marks it read; it never waits for the model. The library service writes the note. If the service is down, Maniflux leaves a `status: pending` note in `content/` instead. Linking in the journal happens in Obsidian (Process New Clips).
+- Save hands the item (with its text and your thought) to the library service and marks it read; it never waits for the model. The library service writes the note. If the service can't be reached, nothing is saved and the card stays. Linking in the journal happens in Obsidian (Process New Clips).
 - Phone-friendly layout; keyboard shortcuts j/k/o/v/s/x.
 
 ## The vault
