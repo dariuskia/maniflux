@@ -137,6 +137,7 @@ def finish_pending(path: Path) -> None:
         props["date-archived"] = fm.get("date-archived", "")  # never undo an archive
         new = L.set_props(before, props, remove=("author", "yt-channel", "yt-category", "clip-text"),
                           in_place_of={"creators": "author"})
+        new = L.place_after(new, "via", "creators")  # wherever the clip's template had it
         log(f"filled in {path.name}: {note['type']}{'/' + note['form'] if note.get('form') else ''}")
     L.frontmatter(new)  # must still parse
     if not path.exists() or path.read_text() != before:  # changed while we worked on it: next time

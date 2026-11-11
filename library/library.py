@@ -399,3 +399,27 @@ def set_props(text: str, updates: dict, remove: tuple = (), before: str = "tags"
     at = next((i for i, b in enumerate(out) if key(b) == before), len(out))
     out[at:at] = new
     return "---\n" + "\n".join(l for b in out for l in b) + "\n---\n" + body
+
+
+def place_after(text: str, key: str, after: str) -> str:
+    """Moves one property to directly below another (e.g. via just below creators), keeping everything
+    else as it is. Unchanged if either is missing."""
+    fm_text, body = split_note(text)
+    blocks: list[list[str]] = []
+    for line in fm_text.split("\n"):
+        if blocks and (line.startswith((" ", "\t")) or not line.strip()):
+            blocks[-1].append(line)
+        else:
+            blocks.append([line])
+
+    def name(block):
+        m = re.match(r"^([^:\s][^:]*):", block[0])
+        return m.group(1).strip().strip('"').strip("'") if m else None
+
+    moving = [b for b in blocks if name(b) == key]
+    if not moving or not any(name(b) == after for b in blocks):
+        return text
+    rest = [b for b in blocks if name(b) != key]
+    at = next(i for i, b in enumerate(rest) if name(b) == after) + 1
+    rest[at:at] = moving[:1]
+    return "---\n" + "\n".join(l for b in rest for l in b) + "\n---\n" + body
