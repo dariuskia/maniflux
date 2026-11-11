@@ -138,11 +138,15 @@ class FakeLibrary:
         self.jobs = []
         self.down = False
         self.exists = {}  # url -> note name it should say already exists
+        self.relinked = []  # urls asked to be linked again
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if self.down:
             raise httpx.ConnectError("down", request=request)
         job = json.loads(request.content)
+        if job.get("relink"):
+            self.relinked.append(job["url"])
+            return httpx.Response(200, json={"status": "exists", "note": "x"})
         if job["url"] in self.exists:
             return httpx.Response(200, json={"status": "exists", "note": self.exists[job["url"]]})
         self.jobs.append(job)

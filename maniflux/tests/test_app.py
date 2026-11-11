@@ -82,8 +82,8 @@ def test_save_of_something_already_saved(client, fake, library):
 def test_save_skips_url_clipped_elsewhere(client, fake, library):
     (client.content_dir / "clipped.md").write_text(f'---\nurl: "{fake.entries[1]["url"]}"\n---\n')
     r = client.post("/e/1/save", headers=HX)
-    assert "Already in Obsidian: clipped.md" in r.text
-    assert not library.jobs
+    assert "Already in Obsidian: clipped.md" in r.text and "journal again" in r.text
+    assert not library.jobs and library.relinked == [fake.entries[1]["url"]]
 
 
 def test_newsletter_save_leaves_out_the_forwarding_address(client, fake, library):

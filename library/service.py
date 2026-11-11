@@ -55,6 +55,7 @@ class Save(BaseModel):
     via: str = "link ingest"
     date_added: str = ""
     thought: str = ""  # Maniflux: what you wrote when saving
+    relink: bool = False  # if it's already saved, link it in the journal again (Maniflux; Link Ingest does it itself)
     # What the device or Maniflux already knows (all optional)
     title: str = ""
     creators: list[str] = []
@@ -262,6 +263,9 @@ async def save(body: Save, authorization: str = Header("")) -> dict:
         raise HTTPException(400, "that isn't a link")
     existing = await asyncio.to_thread(lambda: fill.Index(FOLDER).by_url(url))
     if existing:
+        if body.relink:
+            await asyncio.to_thread(relink, existing, (body.date_added or now_iso())[:10])
+            log(f"already saved: {existing.name} (linked again)")
         return {"status": "exists", "note": existing.stem}
     job = body.model_dump()
     job["url"] = url

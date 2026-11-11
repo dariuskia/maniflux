@@ -189,7 +189,7 @@ async function linkUnder(app, obsidian, state, file, day, force) {
   const link = app.fileManager.generateMarkdownLink(file, journal.path);
   // A new heading for today comes from the date template, like the journal's "add date" button
   const dayLines = day === moment().format("YYYY-MM-DD") ? await dateTemplate(app, obsidian, state, journal) : null;
-  await app.vault.process(journal, (text) => insertLink(text.split("\n"), link, day, dayLines).join("\n"));
+  await app.vault.process(journal, (text) => insertLink(text.split("\n"), link, day, dayLines, force).join("\n"));
 }
 
 async function clearProps(app, file, keys) {
@@ -239,7 +239,9 @@ async function dateTemplate(app, obsidian, state, journal) {
 // Insert a link under the given day's header, after that day's last task.
 // Same placement as Link Ingest; missing headers go in date order (newest first).
 // dayLines, if given, is the filled-in date template to use for a missing header.
-function insertLink(lines, link, day, dayLines = null) {
+// again: the note was saved again, so its link goes at the top of the day's links even if the day
+// already links it further down (but not twice in that top group)
+function insertLink(lines, link, day, dayLines = null, again = false) {
   const entry = `${link}`;
   const isDateHeader = (l) => /^##\s+\d{4}-\d{2}-\d{2}/.test(l);
   const dateOf = (l) => l.match(/^##\s+(\d{4}-\d{2}-\d{2})/)[1];
@@ -276,13 +278,18 @@ function insertLink(lines, link, day, dayLines = null) {
   for (let i = header + 1; i < lines.length; i++) {
     if (/^#{1,2}\s/.test(lines[i])) { end = i; break; }
   }
-  if (lines.slice(header + 1, end).includes(entry)) return lines;
-
   // Position right after the last checkbox line
   let at = header + 1;
   for (let i = header + 1; i < end; i++) {
     if (/^\s*[-*] \[.\]/.test(lines[i])) at = i + 1;
   }
+  // The links at the top of the day (right after the tasks): a link already there isn't added again
+  let first = at;
+  while (first < end && lines[first].trim() === "") first++;
+  let topLinks = [];
+  for (let i = first; i < end && /^\[\[|^\[[^\]]*\]\(/.test(lines[i]); i++) topLinks.push(lines[i]);
+  if (topLinks.includes(entry)) return lines;
+  if (!again && lines.slice(header + 1, end).includes(entry)) return lines;
 
   if (at > header + 1 && lines[at]?.trim() === "") {
     // Blank line already there: put the link right after it

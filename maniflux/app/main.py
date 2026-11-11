@@ -313,7 +313,13 @@ async def save(request: Request, entry_id: int, thought: str = Form(""), back: s
     async with request.app.state.save_lock:
         existing = await run_in_threadpool(vault.find, entry["url"])
         if existing:
-            text = f"Already in Obsidian: {existing.name}"
+            # Saved again: the library service links the existing note in today's journal again
+            try:
+                await request.app.state.library.save({"url": entry["url"], "relink": True,
+                                                      "date_added": now().isoformat(timespec="seconds")})
+                text = f"Already in Obsidian: {existing.name} (linked in today's journal again)"
+            except LibraryError:
+                text = f"Already in Obsidian: {existing.name}"
         else:
             # The library service works out the note (type, description, cover...) in the background,
             # so saving doesn't wait for it. If it can't be reached, a pending note waits for it instead.

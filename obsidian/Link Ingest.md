@@ -146,13 +146,15 @@ async function addToJournal(app, TFile, journalPath, link, today) {
     for (let i = header + 1; i < lines.length; i++) {
       if (/^#{1,2}\s/.test(lines[i])) { end = i; break; }
     }
-    if (lines.slice(header + 1, end).includes(entry)) return text;
-
     // Position right after the last checkbox line
     let at = header + 1;
     for (let i = header + 1; i < end; i++) {
       if (/^\s*[-*] \[.\]/.test(lines[i])) at = i + 1;
     }
+    // Saved again: it goes at the top of the day's links, unless it's already in that top group
+    let first = at;
+    while (first < end && lines[first].trim() === "") first++;
+    for (let i = first; i < end && /^\[\[|^\[[^\]]*\]\(/.test(lines[i]); i++) if (lines[i] === entry) return text;
 
     if (at > header + 1 && lines[at]?.trim() === "") {
       // Blank line already there: put the link right after it
