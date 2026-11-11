@@ -274,6 +274,7 @@ def work_out(job: dict) -> dict:
     if given in (host(url), "Untitled"):
         given = ""
     title = re.sub(r"\s+", " ", given or meta.get("page_title") or meta["title"] or url).strip()
+    title = re.sub("[\u200b-\u200f\u202a-\u202e\ufeff]", "", title)  # invisible marks (Letterboxd starts with one)
     minutes = job.get("minutes") or None
     if not minutes and lib_type == "writing" and meta["words"] > 150:
         minutes = max(1, round(meta["words"] / WORDS_PER_MINUTE))
