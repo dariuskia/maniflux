@@ -14,7 +14,9 @@ A note is picked up when its type is book, film, show or music and it has no dat
 cover. First the databases are asked for its facts (if it has no ID yet), then for a cover (by its
 IDs), and only then does the cover come from the note's link (the page's own image, or a YouTube
 thumbnail). Each step is tried once per note (remembered by its link in a small state file), so a
-note the databases don't know isn't asked about again. Only the note's own properties change: never its file name, body,
+note the databases don't know isn't asked about again. A try that fails (a database down, the LLM
+unreachable) is retried after 10 minutes, an hour, 6 hours and a day, then given up, with a line in
+the log. Only the note's own properties change: never its file name, body,
 or anything else in the vault. Facts (year, IDs) only come from the databases; the LLM only tidies
 the title and names the creators when the note has none. The cover comes from the databases, or
 else from the page's own preview image.
@@ -27,7 +29,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -61,6 +63,21 @@ def tried(state: dict, key: str) -> dict:
     return {"lookup": v} if isinstance(v, str) else v
 
 
+# After a failed try (a database down, the LLM unreachable), wait this long before the next one;
+# after the last, give up on the note's remaining steps and say so in the log
+RETRY_AFTER_MINUTES = [10, 60, 6 * 60, 24 * 60]
+
+
+def pending(fm: dict, done: dict) -> list[str]:
+    """The steps a note still needs: a lookup if it has no ID, a cover if it has none."""
+    steps = []
+    if not any(fm.get(k) for k in IDS) and "lookup" not in done:
+        steps.append("lookup")
+    if not fm.get("cover") and "cover" not in done:
+        steps.append("cover")
+    return steps
+
+
 def candidates(state: dict) -> list[Path]:
     out = []
     for p in sorted((L.VAULT / L.NOTES_DIR).glob("*.md")):
@@ -71,7 +88,9 @@ def candidates(state: dict) -> list[Path]:
         if fm.get("type", "").strip() not in TYPES:
             continue
         done = tried(state, fm.get("url") or p.name)
-        if (not any(fm.get(k) for k in IDS) and "lookup" not in done) or (not fm.get("cover") and "cover" not in done):
+        if done.get("next_try", "") > datetime.now().isoformat(timespec="seconds"):
+            continue  # failed recently: waiting before trying again
+        if pending(fm, done):
             out.append(p)
     return out
 
@@ -136,8 +155,22 @@ def run(apply: bool) -> int:
         key = L.frontmatter(path.read_text()).get("url") or path.name
         try:
             updates, found, steps = plan(path, tried(state, key))
-        except Exception as e:  # e.g. the LLM or a database is unreachable: try again next round
-            log(f"skipped for now: {path.name}: {str(e)[:120]}")
+        except Exception as e:  # e.g. the LLM or a database is unreachable
+            done = tried(state, key)
+            failures = done.get("failures", 0) + 1
+            if failures > len(RETRY_AFTER_MINUTES):
+                now = datetime.now().isoformat(timespec="seconds")
+                gave_up = pending(L.frontmatter(path.read_text()), done)
+                state[key] = {**{k: v for k, v in done.items() if k != "next_try"}, **{s: now for s in gave_up},
+                              "failures": failures, "gave_up": str(e)[:200]}
+                log(f"gave up on {path.name} after {failures} failed tries ({', '.join(gave_up)}): {str(e)[:120]}")
+            else:
+                wait = RETRY_AFTER_MINUTES[failures - 1]
+                next_try = (datetime.now() + timedelta(minutes=wait)).isoformat(timespec="seconds")
+                state[key] = {**done, "failures": failures, "next_try": next_try}
+                log(f"failed on {path.name} (try {failures}), trying again in {wait} min: {str(e)[:120]}")
+            if apply:
+                save_state(state)
             continue
         log(f"{'filled in' if apply else 'would fill in'} {path.name}: {', '.join(found) or 'nothing to add'}"
             + (f" · title → {updates['title']}" if "title" in updates else ""))
@@ -151,7 +184,8 @@ def run(apply: bool) -> int:
                 path.write_text(new)
             done = tried(state, key)
             now = datetime.now().isoformat(timespec="seconds")
-            state[key] = {**done, **{s: now for s in steps}}
+            state[key] = {k: v for k, v in {**done, **{s: now for s in steps}}.items()
+                          if k not in ("failures", "next_try")}  # a success clears past failures
             save_state(state)
         time.sleep(1)  # MusicBrainz asks for at most one request a second
     return len(todo)
