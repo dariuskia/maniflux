@@ -144,11 +144,11 @@ class FakeLibrary:
         if self.down:
             raise httpx.ConnectError("down", request=request)
         job = json.loads(request.content)
-        if job.get("relink"):
-            self.relinked.append(job["url"])
-            return httpx.Response(200, json={"status": "exists", "note": "x"})
-        if job["url"] in self.exists:
-            return httpx.Response(200, json={"status": "exists", "note": self.exists[job["url"]]})
+        # Like the real service: "relink" only matters when the link is already saved
+        if job["url"] in self.exists or "title" not in job:  # a bare relink request: Maniflux found it itself
+            if job.get("relink"):
+                self.relinked.append(job["url"])
+            return httpx.Response(200, json={"status": "exists", "note": self.exists.get(job["url"], "x")})
         self.jobs.append(job)
         return httpx.Response(200, json={"status": "queued"})
 
