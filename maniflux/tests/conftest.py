@@ -131,12 +131,40 @@ def fake():
     ])
 
 
+class FakeLibrary:
+    """Stands in for the library service: records what Maniflux sends; can be made unreachable."""
+
+    def __init__(self):
+        self.jobs = []
+        self.down = False
+        self.exists = {}  # url -> note name it should say already exists
+        self.relinked = []  # urls asked to be linked again
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        if self.down:
+            raise httpx.ConnectError("down", request=request)
+        job = json.loads(request.content)
+        # Like the real service: "relink" only matters when the link is already saved
+        if job["url"] in self.exists or "title" not in job:  # a bare relink request: Maniflux found it itself
+            if job.get("relink"):
+                self.relinked.append(job["url"])
+            return httpx.Response(200, json={"status": "exists", "note": self.exists.get(job["url"], "x")})
+        self.jobs.append(job)
+        return httpx.Response(200, json={"status": "queued"})
+
+
 @pytest.fixture
-def client(fake, ai, tmp_path, monkeypatch):
+def library():
+    return FakeLibrary()
+
+
+@pytest.fixture
+def client(fake, ai, library, tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from app import config, main
     from app.ai import Summarizer
+    from app.library import Library
     from app.db import DB
     from app.miniflux import Miniflux
     from app.vault import VaultIndex
@@ -148,8 +176,9 @@ def client(fake, ai, tmp_path, monkeypatch):
     main.app.state.db = DB(tmp_path / "test.db")
     main.app.state.vault = VaultIndex(content)
     main.app.state.ai = Summarizer("or-key", "test/model", transport=httpx.MockTransport(ai.handler))
+    main.app.state.library = Library("http://library.test", "token", transport=httpx.MockTransport(library.handler))
     with TestClient(main.app) as c:
         c.content_dir = content
         yield c
-    for k in ("mf", "db", "vault", "ai"):
+    for k in ("mf", "db", "vault", "ai", "library"):
         delattr(main.app.state, k)

@@ -1,0 +1,10 @@
+{# Response after a feed joins or leaves a group: the edited part first, the rest swapped in by id. #}
+{% if edited_from == "chip" %}
+  {% with oob=False %}{% include "_group_chip.html" %}{% endwith %}
+  {% with oob=True %}{% include "_group_members.html" %}{% endwith %}
+{% else %}
+  {% with oob=False %}{% include "_group_members.html" %}{% endwith %}
+  {% with oob=True %}{% include "_group_chip.html" %}{% endwith %}
+{% endif %}
+{% with oob=True, n=members|length %}{% include "_count.html" %}{% endwith %}
+{% with oob=True %}{% include "_feed_groups.html" %}{% endwith %}

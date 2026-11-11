@@ -1,4 +1,4 @@
-QuickAdd user script: paste or share a link, create a note in `content/` with frontmatter, and link it under today's header in the journal. QuickAdd runs the first js block below; this text is ignored.
+QuickAdd user script: paste or share a link, say where you found it, and the library service on the personal server turns it into a finished note in `content/` (type, creators, description, cover, IDs; duplicates caught), in the background. Saving doesn't wait for that: the note appears, and Process New Clips links it in the journal, once it's ready. If the link is already saved, this links the existing note under today's header at once. If the server can't be reached (offline, or Tailscale off), it leaves a pending note that the server fills in later. YouTube's page is read here, on the device, because YouTube won't show it to the server. QuickAdd runs the first js block below; this text is ignored.
 
 ```js
 module.exports = {
@@ -7,165 +7,119 @@ module.exports = {
     name: "Link Ingest",
     author: "Darius",
     options: {
-      "OpenRouter API Key": {
-        type: "secret",
-        id: "openrouter-api-key",
-        placeholder: "sk-or-...",
-        description: "OpenRouter API key. Secrets don't sync, so enter it on each device.",
-      },
-      "Model": {
+      "Library URL": {
         type: "text",
-        defaultValue: "anthropic/claude-haiku-4.5",
-        description: "OpenRouter model slug used for the type, authors and summary",
+        defaultValue: "",
+        placeholder: "https://home.<tailnet>.ts.net:8444",
+        description: "The library service, reached over Tailscale",
+      },
+      "Library Token": {
+        type: "secret",
+        id: "library-token",
+        placeholder: "the LIBRARY_TOKEN from the server's .env",
+        description: "Secrets don't sync, so enter it on each device.",
       },
       "Content Folder": {
         type: "text",
         defaultValue: "content",
-        description: "Folder for new media notes",
-      },
-      "People Folder": {
-        type: "text",
-        defaultValue: "people",
-        description: "Folder that author links point into",
+        description: "Folder for new notes",
       },
       "Journal Path": {
         type: "text",
         defaultValue: "mononoke 🐺.md",
-        description: "Journal note that gets the link",
+        description: "Journal note that gets the link when it's already saved",
       },
     },
   },
 };
 
-const TYPES = ["video", "article", "paper", "podcast", "music", "thread", "book", "other"];
-const normType = (t) => (t === "essay" || t === "blog-post" ? "article" : t);
-
 async function start(params, settings) {
   const { app, quickAddApi, variables, obsidian } = params;
   const { requestUrl, Notice, TFile, moment } = obsidian;
-  let status;
+  const folder = (settings["Content Folder"] || "content").replace(/\/+$/, "");
+  const journalPath = settings["Journal Path"] || "mononoke 🐺.md";
+  const today = moment().format("YYYY-MM-DD");
+  const linkExisting = async (file) => {
+    await addToJournal(app, TFile, journalPath, app.fileManager.generateMarkdownLink(file, journalPath), today);
+    new Notice(`Already saved, linked in journal: ${file.basename}`);
+  };
 
-  try {
-    const apiKey = settings["OpenRouter API Key"];
-    const model = settings["Model"] || "anthropic/claude-haiku-4.5";
-    const folder = (settings["Content Folder"] || "content").replace(/\/+$/, "");
-  const peopleFolder = (settings["People Folder"] || "people").replace(/\/+$/, "");
-  const personLink = (name) => `[[${peopleFolder}/${name}|${name}]]`;
-    const journalPath = settings["Journal Path"] || "mononoke 🐺.md";
-    const today = moment().format("YYYY-MM-DD");
+  // 1. The link and where it was found, on one screen (only the source if the link came from the share sheet)
+  const answers = await quickAddApi.requestInputs([
+    { id: "url", label: "Link", type: "text", placeholder: "https://..." },
+    { id: "source", label: "Where did you find it?", type: "text", placeholder: "e.g. aaron sent it", optional: true },
+  ]);
+  const url = cleanUrl((answers.url || variables.url || "").trim());
+  const source = clean(answers.source || "");
+  if (!/^https?:\/\//i.test(url)) params.abort("That doesn't look like a link.");
 
-    // 1. Ask for the link and where it was found, on one screen.
-    //    If the link came from the share-sheet URI, only the source is asked.
-    const answers = await quickAddApi.requestInputs([
-      { id: "url", label: "Link", type: "text", placeholder: "https://..." },
-      { id: "source", label: "Where did you find it?", type: "text", placeholder: "e.g. aaron sent it", optional: true },
-    ]);
-    const raw = (answers.url || variables.url || "").trim();
-    const source = clean(answers.source || "");
-    const url = cleanUrl(raw);
-    if (!/^https?:\/\//i.test(url)) params.abort("That doesn't look like a link.");
+  // 2. Already saved: link the existing note, at once
+  const existing = app.vault.getMarkdownFiles().find(
+    (f) => f.path.startsWith(folder + "/") && app.metadataCache.getFileCache(f)?.frontmatter?.url === url
+  );
+  if (existing) return linkExisting(existing);
 
-    // 2. If this URL is already saved, just link the existing note
-    const existing = app.vault.getMarkdownFiles().find(
-      (f) => f.path.startsWith(folder + "/") &&
-        app.metadataCache.getFileCache(f)?.frontmatter?.url === url
-    );
-    if (existing) {
-      await addToJournal(app, TFile, journalPath, app.fileManager.generateMarkdownLink(existing, journalPath), today);
-      new Notice(`Already saved, linked in journal: ${existing.basename}`);
-      return;
-    }
-
-    status = new Notice("Reading link…", 0);
-
-    // 3. Collect metadata and page text
-    const forcedType = ruleType(url);
-    let meta;
-    try {
-      meta = (forcedType === "video" || forcedType === "music") && isYouTube(url)
-        ? await gatherYouTube(url, requestUrl)
-        : await gatherPage(url, requestUrl);
-    } catch (e) {
-      console.warn("Link Ingest: fetch failed", e);
-      meta = { title: "", siteName: "", description: "", published: "", authors: [], text: "", generator: "" };
-    }
-    const type = forcedType || (/substack/i.test(meta.generator) ? "article" : null);
-
-    // 4. Ask the model for type, authors, summary (fall back to metadata if it fails)
-    let ai = {};
-    if (apiKey) {
-      status.setMessage("Summarizing…");
-      try {
-        ai = await askModel({ apiKey, model, url, meta, forcedType: type, requestUrl });
-      } catch (e) {
-        console.error("Link Ingest: model call failed", e);
-        new Notice(`Summary failed, saved metadata only: ${e.message}`, 8000);
-      }
-    } else {
-      new Notice("No OpenRouter API key set, saving metadata only.", 8000);
-    }
-
-    const title = clean(ai.title || meta.title || new URL(url).hostname);
-    const finalType = type || (TYPES.includes(normType(ai.type)) ? normType(ai.type) : "other");
-    const authors = dedupe(
-      (Array.isArray(ai.authors) && ai.authors.length ? ai.authors : meta.authors)
-        .map((a) => String(a).replace(/[\[\]|#^]/g, "").trim())
-        .filter(Boolean)
-    );
-    const description = clean(ai.description || meta.description || "");
-    const published = toDate(ai.published, moment) || toDate(meta.published, moment);
-
-    // Length in minutes: video length if known, else word count at ~238 wpm,
-    // else the model's estimate (used for papers, podcasts, books and threads,
-    // where the fetched page isn't the full content)
-    let minutes = meta.minutes || null;
-    const pageIsFullText = !["paper", "podcast", "music", "book", "thread", "video"].includes(finalType);
-    if (!minutes && pageIsFullText && meta.words > 150) minutes = Math.max(1, Math.round(meta.words / 238));
-    if (!minutes && Number(ai.minutes) > 0) minutes = Math.round(Number(ai.minutes));
-    if (finalType === "book") minutes = null; // books don't get a length estimate
-
-    // 5. Write the note
-    const q = (s) => JSON.stringify(String(s));
-    const fm = [
-      "---",
-      `title: ${q(title)}`,
-      `url: ${q(url)}`,
-      `source: ${source ? q(source) : ""}`,
-      "author:",
-      ...authors.map((a) => `  - ${q(personLink(a))}`),
-      `published: ${published}`,
-      `date-added: ${moment().format()}`,
-      `type: ${finalType}`,
-      `minutes: ${minutes ?? ""}`,
-      `description: ${q(description)}`,
-      "tags:",
-      "  - clippings",
-      `  - ${finalType}`,
-      "---",
-      "",
-    ].join("\n");
-
-    if (!app.vault.getAbstractFileByPath(folder)) await app.vault.createFolder(folder);
-    const base = safeFileName(title) || safeFileName(new URL(url).hostname);
-    let path = `${folder}/${base}.md`;
-    for (let n = 2; app.vault.getAbstractFileByPath(path); n++) path = `${folder}/${base} (${n}).md`;
-    const note = await app.vault.create(path, fm);
-
-    // 6. Link it in the journal
-    await addToJournal(app, TFile, journalPath, app.fileManager.generateMarkdownLink(note, journalPath), today);
-
-    status.hide();
-    new Notice(`Saved ${finalType}: ${title}`);
-  } catch (e) {
-    status?.hide();
-    if (e?.name === "MacroAbortError") throw e;
-    console.error("Link Ingest:", e);
-    new Notice(`Link Ingest failed: ${e.message}`, 10000);
-    throw e;
+  // 3. YouTube's details, read here (the server can't): title, channel, category, length, description
+  const job = { url, source, via: "link ingest", date_added: moment().format() };
+  if (isYouTube(url)) {
+    const meta = await gatherYouTube(url, requestUrl);
+    Object.assign(job, {
+      title: meta.title || "", channel: meta.channel || "", category: meta.category || "",
+      minutes: meta.minutes || null, published: meta.published || "", description: (meta.text || "").slice(0, 5000),
+    });
   }
-}
 
-// ---------- Journal ----------
+  // 4. Hand it to the library service; it answers at once
+  const base = (settings["Library URL"] || "").replace(/\/+$/, "");
+  const token = settings["Library Token"] || "";
+  if (base && token) {
+    try {
+      const res = await requestUrl({
+        url: `${base}/save`, method: "POST", contentType: "application/json",
+        headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(job), throw: false,
+      });
+      if (res.status === 200) {
+        if (res.json?.status === "exists") {
+          const file = app.metadataCache.getFirstLinkpathDest(String(res.json.note || ""), "");
+          if (file) return linkExisting(file);
+          new Notice(`Already saved as ${res.json.note}`);
+          return;
+        }
+        new Notice("Saved. It'll appear in the journal once it's filled in.");
+        return;
+      }
+      console.warn("Link Ingest: library service answered", res.status, res.text?.slice(0, 200));
+    } catch (e) {
+      console.warn("Link Ingest: library service unreachable", e);
+    }
+  }
+
+  // 5. The server is out of reach: leave a pending note for it to fill in later
+  const q = (s) => JSON.stringify(String(s));
+  const title = clean(job.title || host(url) || url);
+  const fm = [
+    "---",
+    `title: ${q(title)}`,
+    `url: ${q(url)}`,
+    `source: ${source ? q(source) : ""}`,
+    "via: link ingest",
+    `date-added: ${job.date_added}`,
+    ...(job.minutes ? [`minutes: ${job.minutes}`] : []),
+    ...(job.channel ? [`yt-channel: ${q(job.channel)}`] : []),
+    ...(job.category ? [`yt-category: ${q(job.category)}`] : []),
+    "status: pending",
+    "---",
+    "",
+  ].join("\n");
+  if (!app.vault.getAbstractFileByPath(folder)) await app.vault.createFolder(folder);
+  const base2 = safeFileName(title) || "Untitled";
+  let path = `${folder}/${base2}.md`;
+  for (let n = 2; app.vault.getAbstractFileByPath(path); n++) path = `${folder}/${base2} (${n}).md`;
+  await app.vault.create(path, fm);
+  new Notice(base && token
+    ? "Saved for later: the server couldn't be reached, so it'll be filled in once it can."
+    : "Saved for later: set the Library URL and Token in Link Ingest's settings so notes get filled in.", 8000);
+}
 
 async function addToJournal(app, TFile, journalPath, link, today) {
   const file = app.vault.getAbstractFileByPath(journalPath);
@@ -190,13 +144,15 @@ async function addToJournal(app, TFile, journalPath, link, today) {
     for (let i = header + 1; i < lines.length; i++) {
       if (/^#{1,2}\s/.test(lines[i])) { end = i; break; }
     }
-    if (lines.slice(header + 1, end).includes(entry)) return text;
-
     // Position right after the last checkbox line
     let at = header + 1;
     for (let i = header + 1; i < end; i++) {
       if (/^\s*[-*] \[.\]/.test(lines[i])) at = i + 1;
     }
+    // Saved again: it goes at the top of the day's links, unless it's already in that top group
+    let first = at;
+    while (first < end && lines[first].trim() === "") first++;
+    for (let i = first; i < end && /^\[\[|^\[[^\]]*\]\(/.test(lines[i]); i++) if (lines[i] === entry) return text;
 
     if (at > header + 1 && lines[at]?.trim() === "") {
       // Blank line already there: put the link right after it
@@ -220,27 +176,8 @@ async function addToJournal(app, TFile, journalPath, link, today) {
   });
 }
 
-// ---------- Fetching ----------
-
 function isYouTube(url) {
   return /(^|\.)youtube\.com$|^youtu\.be$/.test(host(url));
-}
-
-function ruleType(url) {
-  const h = host(url);
-  let path = "";
-  try { path = new URL(url).pathname; } catch (e) { /* no path */ }
-  if (/^music\.youtube\.com$|^music\.apple\.com$|(^|\.)soundcloud\.com$|(^|\.)bandcamp\.com$/.test(h)) return "music";
-  if (h === "open.spotify.com") {
-    if (/^\/(intl-[^/]+\/)?(track|album|playlist|artist)\//.test(path)) return "music";
-    return "podcast";
-  }
-  if (/(^|\.)youtube\.com$|^youtu\.be$|(^|\.)vimeo\.com$/.test(h)) return "video";
-  if (/(^|\.)(arxiv\.org|openreview\.net|biorxiv\.org|ssrn\.com|aclanthology\.org)$/.test(h)) return "paper";
-  if (/^(podcasts\.apple\.com|overcast\.fm|pca\.st)$/.test(h)) return "podcast";
-  if (/^(twitter\.com|x\.com|bsky\.app)$/.test(h)) return "thread";
-  if (/(^|\.)substack\.com$/.test(h)) return "article";
-  return null;
 }
 
 async function gatherYouTube(url, requestUrl) {
@@ -248,7 +185,9 @@ async function gatherYouTube(url, requestUrl) {
   try {
     const o = await requestUrl({ url: `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(url)}` });
     meta.title = o.json.title || "";
-    if (o.json.author_name) meta.authors.push(o.json.author_name);
+    // The channel is often a station, label or magazine, not who made it: the model decides
+    if (o.json.author_name) meta.channel = o.json.author_name;
+    if (o.json.thumbnail_url) meta.image = o.json.thumbnail_url;
   } catch (e) { console.warn("Link Ingest: oEmbed failed", e); }
   try {
     const html = (await requestUrl({ url, headers: { "Accept-Language": "en-US,en;q=0.9" } })).text;
@@ -256,121 +195,14 @@ async function gatherYouTube(url, requestUrl) {
     if (desc) meta.text = JSON.parse(`"${desc[1]}"`);
     const pub = html.match(/"(?:publishDate|uploadDate)":"([^"]+)"/);
     if (pub) meta.published = pub[1];
+    // The category the uploader chose ("Music", "Education", ...): a strong hint, not proof
+    const cat = html.match(/"category":"([^"]+)"/);
+    if (cat) meta.category = cat[1];
     const len = html.match(/"lengthSeconds":"(\d+)"/);
     if (len) meta.minutes = Math.max(1, Math.round(Number(len[1]) / 60));
   } catch (e) { console.warn("Link Ingest: YouTube page fetch failed", e); }
   return meta;
 }
-
-async function gatherPage(url, requestUrl) {
-  const res = await requestUrl({
-    url,
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-    throw: false,
-  });
-  if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
-  const ctype = res.headers["content-type"] || res.headers["Content-Type"] || "";
-  if (/pdf/i.test(ctype)) {
-    return { title: decodeURIComponent(url.split("/").pop() || ""), siteName: host(url), description: "", published: "", authors: [], text: "", generator: "" };
-  }
-
-  const doc = new DOMParser().parseFromString(res.text, "text/html");
-  const m = (sel) => doc.querySelector(sel)?.getAttribute("content")?.trim() || "";
-  const ld = readJsonLd(doc);
-
-  const metaAuthors = [m('meta[name="author"]'), m('meta[property="article:author"]'), m('meta[name="citation_author"]')]
-    .filter((a) => a && !/^https?:/i.test(a));
-
-  const meta = {
-    title: m('meta[property="og:title"]') || m('meta[name="twitter:title"]') || m('meta[name="citation_title"]') || (doc.title || "").trim(),
-    siteName: m('meta[property="og:site_name"]') || host(url),
-    description: m('meta[property="og:description"]') || m('meta[name="description"]'),
-    published: m('meta[property="article:published_time"]') || m('meta[name="citation_publication_date"]') || m('meta[name="date"]') || ld.published,
-    authors: dedupe([...metaAuthors, ...ld.authors]),
-    generator: m('meta[name="generator"]'),
-    text: "",
-  };
-
-  doc.querySelectorAll("script, style, noscript, nav, header, footer, aside, form, svg, iframe").forEach((el) => el.remove());
-  const root = doc.querySelector("article") || doc.querySelector("main") || doc.body;
-  const fullText = (root?.textContent || "").replace(/\s+/g, " ").trim();
-  meta.words = fullText ? fullText.split(" ").length : 0;
-  meta.text = fullText.slice(0, 20000);
-  return meta;
-}
-
-function readJsonLd(doc) {
-  const out = { authors: [], published: "" };
-  const visit = (node) => {
-    if (!node || typeof node !== "object") return;
-    if (Array.isArray(node)) return node.forEach(visit);
-    if (node["@graph"]) visit(node["@graph"]);
-    if (node.author) {
-      [].concat(node.author).forEach((a) => {
-        const n = typeof a === "string" ? a : a?.name;
-        if (n && !/^https?:/i.test(n)) out.authors.push(n);
-      });
-    }
-    if (!out.published && node.datePublished) out.published = node.datePublished;
-  };
-  doc.querySelectorAll('script[type="application/ld+json"]').forEach((s) => {
-    try { visit(JSON.parse(s.textContent)); } catch (e) { /* ignore bad JSON-LD */ }
-  });
-  return out;
-}
-
-// ---------- Model (OpenRouter) ----------
-
-async function askModel({ apiKey, model, url, meta, forcedType, requestUrl }) {
-  const prompt = [
-    "You are filing a link in a personal reading log. Using the page data below, reply with only a JSON object with these keys:",
-    '- "title": the title of the content, without site-name suffixes',
-    `- "type": one of ${TYPES.join(", ")} (essays and blog posts count as article)${forcedType ? ` (it is a ${forcedType})` : ""}`,
-    '- "authors": array of the people who made it (use the organization if no person is credited); [] if unknown',
-    '- "description": a 2-3 sentence plain summary of what it says or covers',
-    '- "published": publication date as YYYY-MM-DD, or "" if unknown',
-    '- "minutes": your estimate of how many minutes it takes to read, watch or listen to the full piece (a number; for a paper, the full paper, not just the abstract; for music, the track or album)',
-    "",
-    `URL: ${url}`,
-    `Site: ${meta.siteName}`,
-    `Metadata title: ${meta.title}`,
-    `Metadata authors: ${meta.authors.join(", ")}`,
-    `Metadata published: ${meta.published}`,
-    `Metadata description: ${meta.description}`,
-    "",
-    "Page text:",
-    meta.text || "(none available)",
-  ].join("\n");
-
-  const res = await requestUrl({
-    url: "https://openrouter.ai/api/v1/chat/completions",
-    method: "POST",
-    contentType: "application/json",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "X-Title": "Obsidian Link Ingest",
-    },
-    body: JSON.stringify({ model, max_tokens: 800, messages: [{ role: "user", content: prompt }] }),
-    throw: false,
-  });
-
-  if (res.status !== 200) {
-    let msg = res.text.slice(0, 200);
-    try { msg = res.json?.error?.message || msg; } catch (e) { /* keep raw text */ }
-    throw new Error(`OpenRouter ${res.status}: ${msg}`);
-  }
-
-  const content = res.json?.choices?.[0]?.message?.content;
-  const out = Array.isArray(content) ? content.map((c) => c.text || "").join("") : String(content || "");
-  const match = out.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("The model didn't return JSON");
-  return JSON.parse(match[0]);
-}
-
-// ---------- Helpers ----------
 
 function cleanUrl(raw) {
   const found = raw.match(/https?:\/\/\S+/i);
@@ -392,22 +224,6 @@ function host(url) {
 
 function clean(s) {
   return String(s || "").replace(/\s+/g, " ").trim();
-}
-
-function dedupe(arr) {
-  const seen = new Set();
-  return arr.filter((x) => {
-    const k = x.toLowerCase();
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-}
-
-function toDate(s, moment) {
-  if (!s) return "";
-  const d = moment(s, moment.ISO_8601, true).isValid() ? moment(s, moment.ISO_8601) : moment(new Date(s));
-  return d.isValid() ? d.format("YYYY-MM-DD") : "";
 }
 
 function safeFileName(s) {

@@ -75,20 +75,19 @@ title: "Why Politics Has Become So Frenzied"
 url: "https://…"
 source: "The Atlantic"
 via: reader
-author:
+creators:
   - "[[people/Jane Doe|Jane Doe]]"
 published: 2026-10-27
 date-added: 2026-10-30T12:00:00-07:00
-type: article
+type: writing
+form:
 minutes: 9
 description: "A 2-3 sentence plain summary of what the piece covers."
 tags:
   - clippings
-  - article
-archive:
+  - writing
+date-archived:
 ---
-
-## Notes
 
 (your thought, if you saved with one)
 ```
@@ -152,7 +151,7 @@ These build on version one in roughly this order; none needs a redesign.
 - **Vault:** notes go to `~/Documents/Obsidian Vault/content/`.
 - **Miniflux API key:** created; it lives in the private `.env` file, never in this doc.
 - **Saved notes:** the link, a description and your notes; no full article text.
-- **Saving ends an item's time in Maniflux:** it's marked read in Miniflux and leaves the list. Finishing it in Obsidian (`archive: true`) needs no sync back.
+- **Saving ends an item's time in Maniflux:** it's marked read in Miniflux and leaves the list. Finishing it in Obsidian (filling in `date-archived`) needs no sync back.
 - **Type and description are filled by Maniflux at save time**, so notes reach Obsidian finished. Process New Clips in Obsidian only links them in the journal.
 - **No undo for save.** Archive can be undone.
 - **Search matches the start of words** ("RIP J" finds "RIP Juan Atkins"), in both the list and the archive. Miniflux's own search only matches whole words, so the archive is searched in Maniflux from an in-memory index kept current with Miniflux's "changed since" filter.

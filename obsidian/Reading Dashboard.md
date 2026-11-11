@@ -18,19 +18,20 @@ const nameOf = (v) => {
 };
 
 const get = (p, key) => p.value(key);
-const isDone = (p) => get(p, "archive") === true;
+// Archived = date-archived is filled in (the date it was first archived)
+const isDone = (p) => !!get(p, "date-archived");
 const added = (p) => toMs(get(p, "date-added")) || toMs(p.$ctime);
-const finished = (p) => toMs(get(p, "finished")) || toMs(p.$mtime);
+const finished = (p) => toMs(get(p, "date-archived")) || toMs(p.$mtime);
 const minutes = (p) => {
   const m = Number(get(p, "minutes"));
   return m > 0 ? m : null;
 };
 
-const TYPES = ["article", "video", "podcast", "paper", "music", "thread", "book", "other"];
-// Notes with no type, or a type not in the list, count as "other"
+const TYPES = ["writing", "research", "book", "podcast", "video", "film", "show", "music", "art", "project"];
+// Notes with no type, or a type not in the list, count as "writing"
 const typeOf = (p) => {
   const t = get(p, "type");
-  return TYPES.includes(t) ? t : "other";
+  return TYPES.includes(t) ? t : "writing";
 };
 const lengthOf = (p) => {
   if (get(p, "type") === "book") return "Books";
@@ -76,7 +77,7 @@ const COLUMNS = [
       </div>
     ),
   },
-  { id: "Type", value: (p) => get(p, "type") ?? "" },
+  { id: "Type", value: (p) => [get(p, "type"), get(p, "form")].filter(Boolean).join(" · ") },
   {
     id: "URL",
     value: (p) => get(p, "url") ?? "",
@@ -163,7 +164,7 @@ function RandomPick({ rows }) {
         <div>
           <h3><dc.Link link={pick.$link} /></h3>
           <p>
-            {[get(pick, "type"), minutes(pick) ? `${minutes(pick)} min` : null, asList(get(pick, "author")).map(nameOf).join(", ")]
+            {[get(pick, "type"), minutes(pick) ? `${minutes(pick)} min` : null, asList(get(pick, "creators")).map(nameOf).join(", ")]
               .filter(Boolean)
               .join(" · ")}
           </p>
@@ -183,7 +184,7 @@ const VIEWS = ["Queue", "By type", "By length", "Getting old", "Random", "Recent
 return function View() {
   const pages = dc.useQuery(`@page and path("${FOLDER}")`);
   const [view, setView] = dc.useState("Queue");
-  const [type, setType] = dc.useState("article");
+  const [type, setType] = dc.useState("writing");
 
   const unread = pages.filter((p) => !isDone(p));
   const cutoff = Date.now() - OLD_DAYS * 24 * 60 * 60 * 1000;

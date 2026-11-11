@@ -1,0 +1,19 @@
+{# One group's feeds, each with a × to take it out, and a menu to add another. #}
+<div id="members-{{ g.id }}" class="members-body" hx-target="this" hx-swap="outerHTML"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {% if members %}
+  <ul>
+    {% for f in members %}
+    <li>
+      {% if f.site_url %}<a href="{{ f.site_url }}" target="_blank" rel="noopener">{{ f.title }}</a>{% else %}<span>{{ f.title }}</span>{% endif %}
+      <button type="button" class="x" hx-post="/groups/{{ g.id }}/feeds/{{ f.id }}/remove" aria-label="Take {{ f.title }} out of {{ g.name }}" title="Take out of {{ g.name }}">×</button>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if others %}
+  <select name="feed_id" hx-post="/groups/{{ g.id }}/feeds" hx-trigger="change" aria-label="Add a feed to {{ g.name }}">
+    <option value="">+ Add a feed…</option>
+    {% for f in others %}<option value="{{ f.id }}">{{ f.title }}</option>{% endfor %}
+  </select>
+  {% endif %}
+</div>

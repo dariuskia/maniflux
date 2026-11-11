@@ -203,7 +203,7 @@ def status(request: Request, msg: str = ""):
     for a in db.accounts():
         u = e(a["username"])
         rows.append(
-            f"<tr><td><a href='https://www.instagram.com/{u}/'>@{u}</a></td><td>{a['post_count']}</td>"
+            f"<tr><td><a href='/preview/{u}'>@{u}</a></td><td>{a['post_count']}</td>"
             f"<td>{_when(a['last_success'])}</td>"
             f"<td>{_when(a['last_check'] + config.POLL_HOURS * 3600) if a['last_check'] else 'soon'}</td>"
             f"<td>{e(a['last_error'])}</td>"

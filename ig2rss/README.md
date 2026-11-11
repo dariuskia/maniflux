@@ -63,7 +63,9 @@ In Miniflux (http://127.0.0.1:8080), add a subscription with:
 http://ig2rss:8091/feeds/USERNAME.xml
 ```
 
-That address works inside Docker, where Miniflux runs. From a browser on this Mac, the same feed is at `http://127.0.0.1:8091/feeds/USERNAME.xml`.
+That address works inside Docker, when Miniflux runs on the same machine. From a browser on this Mac, the same feed is at `http://127.0.0.1:8091/feeds/USERNAME.xml`.
+
+With Miniflux on the personal server (see `server/README.md`), use the Mac's Tailscale address instead: `http://<Mac's Tailscale IP>:8091/feeds/USERNAME.xml`. `tailscale ip -4` on the Mac prints it. Set `IG2RSS_FEED_BASE_URL=http://<Mac's Tailscale IP>:8091` in the Mac's `.env` and ig2rss's page shows this address, ready to copy. Don't use the `127.0.0.1` address there: on the server, that means the server itself.
 
 The account must be on ig2rss's page. Its feed is empty until its first check, a few minutes after you add it. Miniflux picks up new posts on its own refresh, usually within an hour.
 

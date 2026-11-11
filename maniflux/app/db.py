@@ -185,6 +185,12 @@ class DB:
         self.x("INSERT INTO feed_group_member (feed_id, group_id) VALUES (?, ?)", (feed_id, group_id))
         return True
 
+    def set_member(self, feed_id: int, group_id: int, on: bool) -> None:
+        if on:
+            self.x("INSERT OR IGNORE INTO feed_group_member (feed_id, group_id) VALUES (?, ?)", (feed_id, group_id))
+        else:
+            self.x("DELETE FROM feed_group_member WHERE feed_id = ? AND group_id = ?", (feed_id, group_id))
+
     def steering(self):
         return Steering(self.feed_weights(), self.groups(), self.memberships(), self.rules())
 

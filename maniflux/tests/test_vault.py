@@ -27,27 +27,27 @@ def test_note_format():
     assert fm["url"] == "https://www.theatlantic.com/x?id=3"
     assert fm["source"] == "The Atlantic"
     assert fm["via"] == "reader"
-    assert fm["author"] == ["[[people/Jane Doe|Jane Doe]]", "[[people/John Roe|John Roe]]"]
+    assert fm["creators"] == ["[[people/Jane Doe|Jane Doe]]", "[[people/John Roe|John Roe]]"]
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", fm["published"])
     assert fm["date-added"] == "2026-10-30T12:00:00-07:00"
-    assert fm["type"] == "article"
+    assert fm["type"] == "writing" and fm["form"] is None  # an article is writing, with no form
     assert fm["minutes"] == 9
     assert fm["description"] == 'Says "a lot": about politics.'
-    assert fm["tags"] == ["clippings", "article"]
-    assert "archive" in fm and fm["archive"] is None
+    assert fm["tags"] == ["clippings", "writing"]
+    assert "date-archived" in fm and fm["date-archived"] is None and "archive" not in fm
     # finished note: no prompts and no page text
     assert "{{" not in text and "%%" not in text
-    assert text.endswith("---\n\n## Notes\n\nmy thought\n")
+    assert text.endswith("---\n\nmy thought\n")
 
 
 def test_empty_fields_and_books():
     e = make_entry(1, 'Quotes "and" colons: a [test] #1', author="", reading_time=7)
     fm = read_frontmatter(note(e, note_type="book", description=""))
     assert fm["title"] == 'Quotes "and" colons: a [test] #1'
-    assert fm["author"] is None and fm["description"] is None
+    assert fm["creators"] is None and fm["description"] is None
     assert fm["minutes"] is None  # books don't get a length
     assert safe_file_name(e["title"]) == "Quotes and colons a test 1"
-    assert note(e).endswith("## Notes\n\n")
+    assert note(e).endswith("---\n") and "## Notes" not in note(e)
 
 
 def test_write_never_overwrites(tmp_path):
@@ -99,11 +99,28 @@ def test_email_authors_are_not_names():
     assert clean_author("Jane Doe") == "Jane Doe"
     e = make_entry(1, author="dariuskianersi+caf_=x=news.example.com@gmail.com")
     fm = read_frontmatter(note(e))
-    assert fm["author"] is None
+    assert fm["creators"] is None
     fm = read_frontmatter(render_note(e, "", NOW, "people", TZ, note_type="article", description="d",
                                       authors=["Resident Advisor", "[[x]]"]))
-    assert fm["author"] == ["[[people/Resident Advisor|Resident Advisor]]", "[[people/x|x]]"]
+    assert fm["creators"] == ["[[people/Resident Advisor|Resident Advisor]]", "[[people/x|x]]"]
     # a real author from the feed wins over the model's
     fm = read_frontmatter(render_note(make_entry(2, author="Jane Doe"), "", NOW, "people", TZ,
                                       note_type="article", description="d", authors=["Someone Else"]))
-    assert fm["author"] == ["[[people/Jane Doe|Jane Doe]]"]
+    assert fm["creators"] == ["[[people/Jane Doe|Jane Doe]]"]
+
+
+def test_kinds_become_library_types():
+    for kind, (t, form) in {"paper": ("research", "paper"), "thread": ("writing", "thread"),
+                            "podcast": ("podcast", "episode"), "other": ("project", "")}.items():
+        fm = read_frontmatter(note(make_entry(1, "A title", author="Jane Doe"), note_type=kind))
+        assert fm["type"] == t and (fm["form"] or "") == form and fm["tags"] == ["clippings", t]
+
+
+def test_film_and_book_links():
+    from app import kinds
+    assert kinds.rule_type("https://letterboxd.com/film/close-up/") == "film"
+    assert kinds.rule_type("https://www.imdb.com/title/tt0100234/") == "film"
+    assert kinds.rule_type("https://www.goodreads.com/en/book/show/52374.X") == "book"
+    assert kinds.rule_type("https://letterboxd.com/someone/") is None
+    fm = read_frontmatter(note(make_entry(1, "Close-Up", url="https://letterboxd.com/film/close-up/"), note_type="film"))
+    assert fm["type"] == "film" and fm["tags"] == ["clippings", "film"]

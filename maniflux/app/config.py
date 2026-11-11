@@ -14,6 +14,9 @@ DIGEST_MODEL = os.environ.get("DIGEST_MODEL", "anthropic/claude-sonnet-5.5")
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://127.0.0.1:8090").rstrip("/")
 # Where Miniflux (in Docker) fetches the digests feed from
 DIGEST_FEED_URL = os.environ.get("DIGEST_FEED_URL", "http://maniflux:8090/digests/feed.xml")
+# The library service (library/ in the feed repo) that turns a saved link into a finished note
+LIBRARY_URL = os.environ.get("LIBRARY_URL", "http://library:8095").rstrip("/")
+LIBRARY_TOKEN = os.environ.get("LIBRARY_TOKEN", "").strip()
 DB_PATH = Path(os.environ.get("DB_PATH", "/data/maniflux.db"))
 PEOPLE_FOLDER = os.environ.get("PEOPLE_FOLDER", "people").strip("/")
 TZ = ZoneInfo(os.environ.get("TZ", "America/Los_Angeles"))

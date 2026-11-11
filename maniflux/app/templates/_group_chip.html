@@ -1,1 +1,1 @@
-<button type="button" class="chip {{ 'on' if on else '' }}" hx-post="/feeds/{{ feed_id }}/groups/{{ g.id }}" hx-swap="outerHTML">{{ g.name }}</button>
+<button type="button" id="chip-{{ feed_id }}-{{ g.id }}" class="chip {{ 'on' if on else '' }}" hx-post="/feeds/{{ feed_id }}/groups/{{ g.id }}" hx-swap="outerHTML"{% if oob %} hx-swap-oob="true"{% endif %}>{{ g.name }}</button>
