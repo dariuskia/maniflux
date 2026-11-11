@@ -115,6 +115,8 @@ def finish_pending(path: Path) -> None:
         job = {"url": fm["url"], "title": fm.get("title", ""), "minutes": int(fm["minutes"]) if
                str(fm.get("minutes", "")).isdigit() else None, "published": fm.get("published", ""),
                "description": fm.get("description", ""), "channel": fm.get("yt-channel", ""),
+               # The page as you saw it (the Web Clipper's {{content}}, past any paywall): read instead of the page
+               "text": str(fm.get("clip-text") or "")[:20000],
                "category": fm.get("yt-category", ""),
                # Authors the clip already read off the page (the Web Clipper's {{author}})
                "creators": [L.link_target(c) for c in (lambda v: v if isinstance(v, list) else [v])(
@@ -122,17 +124,17 @@ def finish_pending(path: Path) -> None:
         note = fill.work_out(job)
         # A description written where the page could be read in full (the Web Clipper, in your logged-in
         # browser) beats one from the server, which only sees a paywall on sites like the NYT: keep it
-        if str(fm.get("description") or "").strip():
+        if str(fm.get("description") or "").strip() and not str(fm.get("clip-text") or "").strip():
             note["description"] = fm["description"].strip()
         dup, why = index.duplicate(note)
     if dup:
-        new = L.set_props(before, {"status": "duplicate", "duplicate-of": f"[[{dup.stem}]]"})
+        new = L.set_props(before, {"status": "duplicate", "duplicate-of": f"[[{dup.stem}]]"}, remove=("clip-text",))
         log(f"{path.name} is already saved as {dup.name} ({why}); Process New Clips will merge it")
     else:
         props = fill.props_for(note, source=fm.get("source", ""), via=fm.get("via") or "clip",
                                date_added=fm.get("date-added") or now_iso())
         props["date-archived"] = fm.get("date-archived", "")  # never undo an archive
-        new = L.set_props(before, props, remove=("author", "yt-channel", "yt-category"),
+        new = L.set_props(before, props, remove=("author", "yt-channel", "yt-category", "clip-text"),
                           in_place_of={"creators": "author"})
         log(f"filled in {path.name}: {note['type']}{'/' + note['form'] if note.get('form') else ''}")
     L.frontmatter(new)  # must still parse
@@ -202,9 +204,8 @@ def pending_notes() -> list[Path]:
     for p in FOLDER.glob("*.md"):
         p = p.resolve()
         try:
-            with open(p, encoding="utf-8") as f:
-                head = f.read(4000)
-        except OSError:
+            head = L.split_note(p.read_text(encoding="utf-8"))[0]  # the whole properties block (clip-text can be long)
+        except (OSError, UnicodeDecodeError):
             continue
         # status: pending, also written with quotes ("status": "pending"), as the Web Clipper does
         if re.search(r'(?m)^["\']?status["\']?\s*:\s*["\']?pending["\']?\s*$', head):
