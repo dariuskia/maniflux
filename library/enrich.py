@@ -37,6 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import library as L  # noqa: E402
 
 TYPES = {"book", "film", "show", "music"}
+# Only a cover for these (their thumbnail or show art); no database lookups
+COVER_ONLY = {"video", "podcast"}
 IDS = ["openlibrary", "isbn", "imdb", "tmdb", "musicbrainz", "wikidata", "spotify"]
 STATE = Path(os.environ.get("LIBRARY_STATE", Path.home() / ".cache" / "library-enrich.json"))
 EVERY_MINUTES = float(os.environ.get("LIBRARY_EVERY_MINUTES", "5"))
@@ -72,7 +74,8 @@ RETRY_AFTER_MINUTES = [10, 60, 6 * 60, 24 * 60]
 def pending(fm: dict, done: dict) -> list[str]:
     """The steps a note still needs: a lookup if it has no ID, a cover if it has none."""
     steps = []
-    if not any(fm.get(k) for k in IDS) and "lookup" not in done:
+    kind = (fm.get("type") or "").strip()
+    if kind in TYPES and not any(fm.get(k) for k in IDS) and "lookup" not in done:
         steps.append("lookup")
     if not fm.get("cover") and "cover" not in done:
         steps.append("cover")
@@ -86,7 +89,7 @@ def candidates(state: dict) -> list[Path]:
             fm = L.frontmatter(p.read_text())
         except Exception:  # a note being written right now, or broken frontmatter: skip it this round
             continue
-        if fm.get("type", "").strip() not in TYPES:
+        if fm.get("type", "").strip() not in TYPES | COVER_ONLY:
             continue
         done = tried(state, fm.get("url") or p.name)
         if done.get("next_try", "") > datetime.now().isoformat(timespec="seconds"):
@@ -106,8 +109,8 @@ def plan(path: Path, done: dict) -> tuple[dict, list[str], list[str]]:
     steps: list[str] = []
     ids = {k: fm[k] for k in IDS if fm.get(k)}
 
-    # 1. Facts from the databases, if the note has no ID yet
-    if not ids and "lookup" not in done:
+    # 1. Facts from the databases, if the note has no ID yet (not for videos and podcasts)
+    if kind in TYPES and not ids and "lookup" not in done:
         tidy = L.clean(fm)
         creators = authors or tidy["creators"]
         # A failed lookup (a database down or busy) raises, so the note is tried again next round

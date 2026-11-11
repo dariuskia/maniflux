@@ -52,7 +52,7 @@ Writing about music, film or art is still `writing`; it connects to the work thr
 
 ## Filling in new books, films, shows and music
 
-The Web Clipper, Link Ingest and Maniflux only know what the page said. The **library service** on the personal server (`enrich.py --watch`, in Docker next to Maniflux) checks `content/` every 5 minutes for book, film, show and music notes, and fills in:
+The Web Clipper, Link Ingest and Maniflux only know what the page said. The **library service** on the personal server (`enrich.py --watch`, in Docker next to Maniflux) checks `content/` every 5 minutes for book, film, show and music notes, and fills in (for videos and podcasts, only a cover: the thumbnail or episode art):
 
 - `creators` in place of `author`, if a note still has the old name (from an old Web Clipper template)
 - `year`, `cover`, and IDs from Open Library, Wikidata or MusicBrainz, plus `form` for music (album, EP, track)

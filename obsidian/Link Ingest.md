@@ -1,4 +1,4 @@
-QuickAdd user script: paste or share a link, create a note in `content/` with frontmatter, and link it under today's header in the journal. QuickAdd runs the first js block below; this text is ignored.
+QuickAdd user script: paste or share a link and create a note in `content/` with frontmatter. Process New Clips (on the Mac) links new notes in the journal; if the link is already saved, this links the existing note under today's header itself. QuickAdd runs the first js block below; this text is ignored.
 
 ```js
 module.exports = {
@@ -21,7 +21,7 @@ module.exports = {
       "Content Folder": {
         type: "text",
         defaultValue: "content",
-        description: "Folder for new media notes",
+        description: "Folder for new notes",
       },
       "People Folder": {
         type: "text",
@@ -37,8 +37,24 @@ module.exports = {
   },
 };
 
-const TYPES = ["video", "article", "paper", "podcast", "music", "thread", "book", "other"];
+const TYPES = ["video", "article", "paper", "podcast", "music", "thread", "book", "film", "other"];
 const normType = (t) => (t === "essay" || t === "blog-post" ? "article" : t);
+// Forms the model may pick, per library type (see library/README.md in the feed repo)
+const FORMS = {
+  writing: ["essay", "news", "review", "interview", "newsletter", "thread", "guide"],
+  research: ["paper", "report"],
+  music: ["album", "ep", "track", "mix", "radio show", "performance"],
+  video: ["interview", "talk", "video essay"],
+  podcast: ["episode"],
+  film: ["documentary", "short"],
+};
+// The kinds above decide how a link is read; the note gets the library types (see library/README.md in the feed repo)
+const NOTE_TYPE = {
+  article: ["writing", ""], paper: ["research", "paper"], thread: ["writing", "thread"],
+  video: ["video", ""], podcast: ["podcast", "episode"], music: ["music", ""], book: ["book", ""],
+  film: ["film", ""],
+  other: ["project", ""],
+};
 
 async function start(params, settings) {
   const { app, quickAddApi, variables, obsidian } = params;
@@ -106,9 +122,10 @@ async function start(params, settings) {
     }
 
     const title = clean(ai.title || meta.title || new URL(url).hostname);
-    const finalType = type || (TYPES.includes(normType(ai.type)) ? normType(ai.type) : "other");
+    let finalType = type || (TYPES.includes(normType(ai.type)) ? normType(ai.type) : "other");
+    if (finalType === "video" && ai.is_music === true) finalType = "music"; // a set, mix, performance or music video
     const authors = dedupe(
-      (Array.isArray(ai.authors) && ai.authors.length ? ai.authors : meta.authors)
+      (Array.isArray(ai.authors) && ai.authors.length ? ai.authors : meta.authors.length ? meta.authors : meta.channel ? [meta.channel] : [])
         .map((a) => String(a).replace(/[\[\]|#^]/g, "").trim())
         .filter(Boolean)
     );
@@ -119,28 +136,34 @@ async function start(params, settings) {
     // else the model's estimate (used for papers, podcasts, books and threads,
     // where the fetched page isn't the full content)
     let minutes = meta.minutes || null;
-    const pageIsFullText = !["paper", "podcast", "music", "book", "thread", "video"].includes(finalType);
+    const pageIsFullText = !["paper", "podcast", "music", "book", "film", "thread", "video"].includes(finalType);
     if (!minutes && pageIsFullText && meta.words > 150) minutes = Math.max(1, Math.round(meta.words / 238));
     if (!minutes && Number(ai.minutes) > 0) minutes = Math.round(Number(ai.minutes));
     if (finalType === "book") minutes = null; // books don't get a length estimate
 
     // 5. Write the note
+    const [noteType, ruleForm] = NOTE_TYPE[finalType] || ["project", ""];
+    const aiForm = String(ai.form || "").toLowerCase().trim();
+    const noteForm = (FORMS[noteType] || []).includes(aiForm) ? aiForm : ruleForm;
     const q = (s) => JSON.stringify(String(s));
     const fm = [
       "---",
       `title: ${q(title)}`,
       `url: ${q(url)}`,
       `source: ${source ? q(source) : ""}`,
-      "author:",
+      "creators:",
       ...authors.map((a) => `  - ${q(personLink(a))}`),
       `published: ${published}`,
       `date-added: ${moment().format()}`,
-      `type: ${finalType}`,
+      `type: ${noteType}`,
+      `form: ${noteForm}`,
+      ...(meta.image ? [`cover: ${q(meta.image)}`] : []),
       `minutes: ${minutes ?? ""}`,
       `description: ${q(description)}`,
       "tags:",
       "  - clippings",
-      `  - ${finalType}`,
+      `  - ${noteType}`,
+      "date-archived:",
       "---",
       "",
     ].join("\n");
@@ -149,13 +172,11 @@ async function start(params, settings) {
     const base = safeFileName(title) || safeFileName(new URL(url).hostname);
     let path = `${folder}/${base}.md`;
     for (let n = 2; app.vault.getAbstractFileByPath(path); n++) path = `${folder}/${base} (${n}).md`;
-    const note = await app.vault.create(path, fm);
-
-    // 6. Link it in the journal
-    await addToJournal(app, TFile, journalPath, app.fileManager.generateMarkdownLink(note, journalPath), today);
+    await app.vault.create(path, fm);
+    // Process New Clips on the Mac links the new note in the journal
 
     status.hide();
-    new Notice(`Saved ${finalType}: ${title}`);
+    new Notice(`Saved ${noteType}: ${title}`);
   } catch (e) {
     status?.hide();
     if (e?.name === "MacroAbortError") throw e;
@@ -231,11 +252,18 @@ function ruleType(url) {
   let path = "";
   try { path = new URL(url).pathname; } catch (e) { /* no path */ }
   if (/^music\.youtube\.com$|^music\.apple\.com$|(^|\.)soundcloud\.com$|(^|\.)bandcamp\.com$/.test(h)) return "music";
+  if (/^(nts\.live|mixcloud\.com)$/.test(h)) return "music";
   if (h === "open.spotify.com") {
     if (/^\/(intl-[^/]+\/)?(track|album|playlist|artist)\//.test(path)) return "music";
     return "podcast";
   }
   if (/(^|\.)youtube\.com$|^youtu\.be$|(^|\.)vimeo\.com$/.test(h)) return "video";
+  // Films and books: the library service on the server then adds the year, cover and IDs
+  if (h === "letterboxd.com" && /^\/film\//.test(path)) return "film";
+  if (/(^|\.)imdb\.com$/.test(h) && /^\/title\//.test(path)) return "film";
+  if (h === "goodreads.com" && /^\/(en\/)?book\/show\//.test(path)) return "book";
+  if (h === "openlibrary.org" && /^\/(works|books)\//.test(path)) return "book";
+  if (h === "storygraph.com" || h === "app.thestorygraph.com") { if (/^\/books\//.test(path)) return "book"; }
   if (/(^|\.)(arxiv\.org|openreview\.net|biorxiv\.org|ssrn\.com|aclanthology\.org)$/.test(h)) return "paper";
   if (/^(podcasts\.apple\.com|overcast\.fm|pca\.st)$/.test(h)) return "podcast";
   if (/^(twitter\.com|x\.com|bsky\.app)$/.test(h)) return "thread";
@@ -248,7 +276,9 @@ async function gatherYouTube(url, requestUrl) {
   try {
     const o = await requestUrl({ url: `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(url)}` });
     meta.title = o.json.title || "";
-    if (o.json.author_name) meta.authors.push(o.json.author_name);
+    // The channel is often a station, label or magazine, not who made it: the model decides
+    if (o.json.author_name) meta.channel = o.json.author_name;
+    if (o.json.thumbnail_url) meta.image = o.json.thumbnail_url;
   } catch (e) { console.warn("Link Ingest: oEmbed failed", e); }
   try {
     const html = (await requestUrl({ url, headers: { "Accept-Language": "en-US,en;q=0.9" } })).text;
@@ -256,6 +286,9 @@ async function gatherYouTube(url, requestUrl) {
     if (desc) meta.text = JSON.parse(`"${desc[1]}"`);
     const pub = html.match(/"(?:publishDate|uploadDate)":"([^"]+)"/);
     if (pub) meta.published = pub[1];
+    // The category the uploader chose ("Music", "Education", ...): a strong hint, not proof
+    const cat = html.match(/"category":"([^"]+)"/);
+    if (cat) meta.category = cat[1];
     const len = html.match(/"lengthSeconds":"(\d+)"/);
     if (len) meta.minutes = Math.max(1, Math.round(Number(len[1]) / 60));
   } catch (e) { console.warn("Link Ingest: YouTube page fetch failed", e); }
@@ -329,7 +362,9 @@ async function askModel({ apiKey, model, url, meta, forcedType, requestUrl }) {
     "You are filing a link in a personal reading log. Using the page data below, reply with only a JSON object with these keys:",
     '- "title": the title of the content, without site-name suffixes',
     `- "type": one of ${TYPES.join(", ")} (essays and blog posts count as article)${forcedType ? ` (it is a ${forcedType})` : ""}`,
-    '- "authors": array of the people who made it (use the organization if no person is credited); [] if unknown',
+    '- "authors": array of the people who made it or are its subject. For music: the artists or DJs performing, not the channel, station or label that posted it. For an interview: the person interviewed, then the interviewer if named. Use an organization only if no person is involved; [] if unknown',
+    '- "is_music": true if this is music to listen to: a DJ set, mix, radio show, live performance, session, music video, album or track. A video where the artist plays or performs music counts, even with talking in between. false if it is mainly about something (an interview without performance, a talk, review or documentary), even when the subject is music',
+    `- "form": one of ${JSON.stringify(FORMS)} for its kind, or "" if none fits`,
     '- "description": a 2-3 sentence plain summary of what it says or covers',
     '- "published": publication date as YYYY-MM-DD, or "" if unknown',
     '- "minutes": your estimate of how many minutes it takes to read, watch or listen to the full piece (a number; for a paper, the full paper, not just the abstract; for music, the track or album)',
@@ -338,6 +373,8 @@ async function askModel({ apiKey, model, url, meta, forcedType, requestUrl }) {
     `Site: ${meta.siteName}`,
     `Metadata title: ${meta.title}`,
     `Metadata authors: ${meta.authors.join(", ")}`,
+    ...(meta.channel ? [`Channel that posted it: ${meta.channel}`] : []),
+    ...(meta.category ? [`Category chosen by the uploader: ${meta.category}`] : []),
     `Metadata published: ${meta.published}`,
     `Metadata description: ${meta.description}`,
     "",
